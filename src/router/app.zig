@@ -459,6 +459,12 @@ pub fn configured_app_with_route_params(
             return instance;
         }
 
+        /// Releases this application's TLS context exactly once.
+        fn release_tls(self: *Self) void {
+            if (self.tls_ctx) |*tls| tls.deinit();
+            self.tls_ctx = null;
+        }
+
         /// Releases all application resources after shutdown has drained completions.
         pub fn deinit(self: *Self) void {
             if (self.deinitialized) return;
@@ -485,8 +491,7 @@ pub fn configured_app_with_route_params(
             self.quic_transport = null;
             if (self.quic_tls_ctx) |*tls| tls.deinit();
             self.quic_tls_ctx = null;
-            if (self.tls_ctx) |*tls| tls.deinit();
-            self.tls_ctx = null;
+            self.release_tls();
             if (self.ws_deflate) |*context| context.deinit();
             self.ws_deflate = null;
             for (self.static_handlers[0..self.static_handler_count]) |maybe_handler| {
@@ -1365,6 +1370,18 @@ pub fn configured_app_with_route_params(
                 /// Concrete application type every worker owns.
                 pub const Worker = Self;
 
+                /// PEM credential paths loaded into every worker's TLS context.
+                const PemCredentials = struct {
+                    cert_path: [:0]const u8,
+                    key_path: [:0]const u8,
+                };
+
+                /// Where one worker's TLS context credentials come from.
+                const TlsCredentialSource = union(enum) {
+                    pem_files: PemCredentials,
+                    ephemeral: void,
+                };
+
                 allocator: std.mem.Allocator,
                 workers: []Self,
                 inboxes: []ClusterInbox,
@@ -1436,6 +1453,7 @@ pub fn configured_app_with_route_params(
                 /// `callback` accepts any comptime function callable as
                 /// `fn (*Worker, usize) !void`.
                 pub fn configure(self: *Cluster, comptime callback: anytype) !void {
+                    if (self.deinitialized) return error.ClusterDeinitialized;
                     for (self.workers, 0..) |*app_worker, index| try callback(app_worker, index);
                 }
 
@@ -1444,8 +1462,70 @@ pub fn configured_app_with_route_params(
                     return &self.workers[index];
                 }
 
+                /// Loads `cert_path`/`key_path` into one TLS context owned by each worker.
+                ///
+                /// Call once after `configure` and before `listen`; the supported order is
+                /// build_cluster -> configure -> enable_https -> listen -> run. Every worker
+                /// keeps its own context, so no TLS state is shared between loops. On any
+                /// failure the contexts this call created are released and the call is
+                /// retryable.
+                ///
+                /// Fails with `error.ClusterDeinitialized` after `deinit`,
+                /// `error.ClusterRunning` while `run` is active,
+                /// `error.AlreadyListening` after `listen`, and
+                /// `error.TlsAlreadyEnabled` on a repeated call. Credential
+                /// failures (`CertificateLoadFailed`, `PrivateKeyLoadFailed`)
+                /// come from `TlsContext.init`; BoringSSL rejects a key that
+                /// does not match the certificate during key load, so a PEM
+                /// mismatch also reports `PrivateKeyLoadFailed`.
+                pub fn enable_https(
+                    self: *Cluster,
+                    cert_path: [:0]const u8,
+                    key_path: [:0]const u8,
+                ) !void {
+                    return self.install_worker_tls(.{ .pem_files = .{
+                        .cert_path = cert_path,
+                        .key_path = key_path,
+                    } });
+                }
+
+                /// Generates one self-signed certificate per worker for development.
+                ///
+                /// Use `enable_https` with PEM files in production; generated certificates
+                /// differ per worker and live only for the process.
+                pub fn enable_https_ephemeral(self: *Cluster) !void {
+                    return self.install_worker_tls(.{ .ephemeral = {} });
+                }
+
+                fn install_worker_tls(self: *Cluster, source: TlsCredentialSource) !void {
+                    if (self.deinitialized) return error.ClusterDeinitialized;
+                    if (self.thread_count != 0) return error.ClusterRunning;
+
+                    var created: usize = 0;
+                    errdefer for (self.workers[0..created]) |*app_worker| app_worker.release_tls();
+                    for (self.workers) |*app_worker| {
+                        if (app_worker.shutting_down or app_worker.deinitialized) {
+                            return error.ApplicationUnavailable;
+                        }
+                        if (app_worker.server != null) return error.AlreadyListening;
+                        if (app_worker.tls_ctx != null) return error.TlsAlreadyEnabled;
+                        app_worker.tls_ctx = switch (source) {
+                            .pem_files => |credentials| try TlsContext.init(
+                                credentials.cert_path,
+                                credentials.key_path,
+                            ),
+                            .ephemeral => try TlsContext.init_ephemeral(.{}),
+                        };
+                        created += 1;
+                    }
+                }
+
                 /// Binds every worker to one shared kernel port.
                 pub fn listen(self: *Cluster, address: []const u8, port: u16) !void {
+                    // A released cluster has no workers; binding would silently
+                    // succeed without listening anywhere.
+                    if (self.deinitialized) return error.ClusterDeinitialized;
+
                     var listening: usize = 0;
                     errdefer {
                         // Preserve the original bind error during partial cleanup.
@@ -1464,6 +1544,7 @@ pub fn configured_app_with_route_params(
                     message: []const u8,
                     is_text: bool,
                 ) !usize {
+                    if (self.deinitialized) return error.ClusterDeinitialized;
                     if (topic.len == 0) return error.EmptyTopic;
                     if (topic.len > @import("../ws/pubsub.zig").max_topic_length) return error.TopicTooLong;
                     if (message.len > max_ws_message_size) return error.ClusterMessageTooLarge;
@@ -1479,6 +1560,10 @@ pub fn configured_app_with_route_params(
 
                 /// Runs all workers on native threads and joins them on shutdown.
                 pub fn run(self: *Cluster) !void {
+                    // The worker and thread arrays were released; spawning would
+                    // index freed storage.
+                    if (self.deinitialized) return error.ClusterDeinitialized;
+
                     self.worker_failed.store(false, .release);
                     for (0..worker_count) |index| {
                         self.threads[index] = std.Thread.spawn(.{}, worker_main, .{ self, index }) catch |err| {
@@ -1507,6 +1592,9 @@ pub fn configured_app_with_route_params(
                 /// `error.SignalWatcherAlreadyInstalled` while any watcher owns
                 /// the process-wide handler state.
                 pub fn catch_shutdown_signals(self: *Cluster) !void {
+                    // The first worker's loop was released; anchoring the
+                    // watcher on it would reference freed storage.
+                    if (self.deinitialized) return error.ClusterDeinitialized;
                     if (self.signal_watcher != null) return error.SignalWatcherAlreadyInstalled;
                     self.signal_watcher = try core_signal.SignalWatcher.init(
                         &self.workers[0].loop,

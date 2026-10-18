@@ -11,6 +11,8 @@ the framework expects you to configure.
 | Production | `init_https` / `init_http3` | PEM files you provide |
 | Mutual TLS | `init_https_mtls` | PEM server files plus a client CA bundle |
 | Local development | `init_https_ephemeral` / `init_http3_ephemeral` | Generated in memory |
+| TLS cluster, production | `Cluster.enable_https` | PEM files loaded into one context per worker |
+| TLS cluster, development | `Cluster.enable_https_ephemeral` | Generated per worker; development only |
 
 - The certificate argument is a PEM chain, leaf first. The key is a PEM private
   key; `SSL_CTX_check_private_key` runs at startup so a mismatched pair fails
@@ -22,6 +24,14 @@ the framework expects you to configure.
   QUIC keeps early data disabled.
 - There is no hot certificate reload. Rotate by rolling a new process; keep the
   old one draining until it exits. See [tls.md](tls.md).
+- A TLS cluster follows `build_cluster` -> `configure` -> `enable_https` ->
+  `listen` -> `run` -> `request_shutdown` or a shutdown signal -> `deinit`.
+  Call one enable function exactly once before `listen`; each worker reads the
+  PEM files once at startup, so credential rotation is a rolling restart.
+- `enable_https_ephemeral` generates a distinct self-signed certificate per
+  worker and is for development only. `enable_https` does not configure client
+  certificates. HTTP/3/QUIC clustering is not supported; `init_http3` and
+  `listen_udp` remain single-application APIs.
 
 ## 2. Size capacities for your traffic
 

@@ -1,4 +1,4 @@
-# µWebZockets 1.8.0 Examples
+# µWebZockets 1.8.5 Examples
 
 Build the supported examples with Zig 0.16.0:
 
@@ -8,7 +8,8 @@ zig build -Doptimize=ReleaseSafe
 
 The default install contains `hello_world`, `https_server`, `chat_server`,
 `rpc_server`, `http3_server`, `basic_microservice`, `custom_builder`,
-`shared_nothing_cluster`, `h1spec`, and `autobahn_server` under `zig-out/bin`.
+`shared_nothing_cluster`, `tls_cluster`, `h1spec`, and `autobahn_server` under
+`zig-out/bin`.
 
 These examples target the live `App` transports. The bounded HTTP/2/HPACK
 components and the C ABI header are library surfaces rather than standalone
@@ -174,7 +175,7 @@ curl -i http://127.0.0.1:3000/
 ```
 
 The server prints the `µWEBZOCKETS` wordmark and a Vite-style ready summary
-(`µWebZockets v1.8.0  ready in 0.6 ms`, then the `→ Local:` line, with the
+(`µWebZockets v1.8.5  ready in 0.6 ms`, then the `→ Local:` line, with the
 elapsed time scaled from nanoseconds up) before the first accepting listener;
 a one-line `µWebZockets` mark fits narrow terminals. Each request then logs
 Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
@@ -226,6 +227,50 @@ The kernel load-balances accepted connections across the listeners, and every
 connection stays inside the accepting worker's slab. See
 [docs/architecture.md](../docs/architecture.md) for the affinity and tuning
 details.
+
+### TLS-enabled cluster
+
+`tls_cluster` gives each of four workers its own TLS context and a distinct
+self-signed certificate generated at startup:
+
+```sh
+zig build tls_cluster -Doptimize=ReleaseSafe
+```
+
+In another terminal:
+
+```sh
+curl -sk https://127.0.0.1:8443/
+```
+
+The body is `hello from a TLS worker group`. The enable call belongs after
+`configure` and before `listen`:
+
+```zig
+var group = try uz.Server.builder(init.io)
+    .with_max_clients(128)
+    .build_cluster(std.heap.page_allocator, 4, .{});
+defer group.deinit();
+
+const Cluster = @TypeOf(group);
+try group.configure(struct {
+    fn routes(worker: *Cluster.Worker, index: usize) !void {
+        _ = index;
+        _ = try worker.get("/", hello);
+    }
+}.routes);
+
+try group.enable_https_ephemeral();
+try group.listen("0.0.0.0", 8443);
+try group.run();
+```
+
+Use `enable_https("certs/fullchain.pem", "certs/privkey.pem")` in production;
+`enable_https_ephemeral` is development-only and generates a different
+certificate per worker. HTTP/3/QUIC clustering is not supported, and
+`enable_https` does not configure client certificates. See
+[docs/tls.md](../docs/tls.md#tls-enabled-clusters) for ownership, lifecycle,
+and error names.
 
 ## Compliance targets
 

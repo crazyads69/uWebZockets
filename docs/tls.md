@@ -7,10 +7,12 @@ server its certificate and key:
 | --- | --- | --- |
 | Local development, tests, demos | `init_https_ephemeral` / `init_http3_ephemeral` | Generated in memory at startup |
 | Production and shared environments | `init_https` / `init_http3` | PEM files you provide |
+| TLS-enabled worker group (TCP) | [`Cluster.enable_https`](#tls-enabled-clusters) / [`Cluster.enable_https_ephemeral`](#tls-enabled-clusters) | PEM files per worker, or generated per worker for development |
 
-Both paths produce the same `TlsContext`, use TLS 1.3 only, and pick the
-application protocol through ALPN. The difference is only where the key
-material comes from.
+Both single-application paths produce the same `TlsContext`, use TLS 1.3 only,
+and pick the application protocol through ALPN. The difference is only where
+the key material comes from. A worker group applies the same two credential
+sources per worker; see [TLS-enabled clusters](#tls-enabled-clusters).
 
 ## Development: HTTPS with no certificate files
 
@@ -107,10 +109,108 @@ defer server.deinit();
 certificate and key into both contexts.
 
 - The certificate argument is a PEM chain, leaf first.
-- The key argument is a PEM private key. `SSL_CTX_check_private_key` runs at
-  startup, so a mismatched pair fails fast with `error.KeyMismatch` instead of
-  failing during the first handshake.
+- The key argument is a PEM private key. BoringSSL rejects a key that does not
+  match the certificate while loading it, so a mismatched pair fails fast with
+  `error.PrivateKeyLoadFailed` instead of failing during the first handshake.
 - Paths are NUL-terminated Zig slices (`[:0]const u8`).
+
+## TLS-enabled clusters
+
+`Server.builder(...).build_cluster(...)` returns a worker group. Call
+`Cluster.enable_https` with production PEM files, or
+`Cluster.enable_https_ephemeral` for local development, once after
+`configure` and before `listen`:
+
+```zig
+const std = @import("std");
+const uz = @import("uWebZockets");
+
+fn hello(_: *uz.Request, response: *uz.Response) void {
+    response.text("hello from a TLS worker") catch {};
+}
+
+pub fn main(init: std.process.Init) !void {
+    var cluster = try uz.Server.builder(init.io)
+        .with_max_clients(128)
+        .build_cluster(std.heap.page_allocator, 4, .{});
+    defer cluster.deinit();
+
+    const Group = @TypeOf(cluster);
+    try cluster.configure(struct {
+        fn routes(worker: *Group.Worker, index: usize) !void {
+            _ = index;
+            _ = try worker.get("/", hello);
+        }
+    }.routes);
+
+    try cluster.enable_https("certs/fullchain.pem", "certs/privkey.pem");
+    try cluster.listen("0.0.0.0", 8443);
+    try cluster.run();
+}
+```
+
+The supported order is `build_cluster` -> `configure` -> `enable_https` (or
+`enable_https_ephemeral`) -> `listen` -> `run` -> `request_shutdown` or a
+shutdown signal -> `deinit`. TLS setup is startup work: `listen` locks routes
+and starts accepting, so the enable call must not move after it.
+
+Each worker creates and owns one BoringSSL `SSL_CTX` at enable time, before
+any listener exists; every accepted connection creates its own `SSL` from its
+worker's context. No credential, session-cache, handshake, or ticket state is
+shared between loops, and no lock or allocation is added to the request path.
+The certificate and key files are read once per worker at startup, so rotating
+credentials requires a rolling restart. `Cluster.deinit` releases each context
+with its worker.
+
+The context keeps the single-application HTTPS policy: TLS 1.3 only, ALPN `h2`
+then `http/1.1`, and safe-method 0-RTT with non-safe early data answered `425
+Too Early`. Cluster TLS covers HTTP/1.1 and HTTP/2 over TCP. `enable_https`
+does not configure client certificates; use single-application
+`init_https_mtls` when mTLS is required.
+
+HTTP/3/QUIC clustering is not supported. `init_http3` and `listen_udp` remain
+single-application APIs, and a cluster listener is TCP/TLS only.
+
+| Error | Cause |
+| --- | --- |
+| `error.ClusterDeinitialized` | An enable call or `listen` was made after `deinit` |
+| `error.ClusterRunning` | `enable_https` was called while `run` was active |
+| `error.AlreadyListening` | `enable_https` was called after `listen` started |
+| `error.TlsAlreadyEnabled` | `enable_https` was called more than once |
+| `error.CertificateLoadFailed` | The PEM chain could not be read or parsed |
+| `error.PrivateKeyLoadFailed` | The PEM key could not be read or parsed, including a key that does not match the certificate |
+| `error.KeyMismatch` | Defensive check only; BoringSSL rejects a mismatched PEM key during key load |
+| `error.TlsContextCreationFailed` | BoringSSL could not allocate a context |
+| `error.ProtocolConfigurationFailed` | TLS 1.3 bounds could not be applied |
+| `error.ApplicationUnavailable` | A worker was already shutting down or deinitialized |
+
+A failed credential load or context creation releases exactly the contexts
+that call created and can be retried once the cause is fixed; it never
+rewrites or releases a context installed by an earlier successful call. The
+lifecycle decision is recorded in
+[ADR 0002](adr/0002-tls-cluster-lifecycle.md).
+
+Use `enable_https` with PEM files in production. `enable_https_ephemeral`
+generates a distinct self-signed P-256 certificate per worker at startup, takes
+no custom names, and is development-only; because each worker presents a
+different certificate, it is unsuitable for certificate pinning. It can also
+return the `Ephemeral*` generation errors in the
+[Zig error reference](#zig-error-reference). TLS cluster support is additive:
+the single-application `init_https`, `init_https_ephemeral`, `init_https_mtls`,
+`init_http3`, and `init_http3_ephemeral` APIs are unchanged.
+
+```sh
+zig build tls_cluster -Doptimize=ReleaseSafe
+```
+
+In another terminal:
+
+```sh
+curl -sk https://127.0.0.1:8443/
+```
+
+The example runs four workers with per-worker ephemeral certificates and
+serves `hello from a TLS worker group`.
 
 ## Client certificates (mTLS)
 
@@ -217,8 +317,8 @@ generated credential cannot be created, the C layer reports
 | Error | Meaning |
 | --- | --- |
 | `CertificateLoadFailed` | The PEM chain could not be read or parsed |
-| `PrivateKeyLoadFailed` | The PEM key could not be read or parsed |
-| `KeyMismatch` | Certificate and key do not belong together |
+| `PrivateKeyLoadFailed` | The PEM key could not be read or parsed, including a key that does not match the certificate |
+| `KeyMismatch` | Defensive context check; a mismatched PEM key already fails during key load |
 | `InvalidClientAuthConfig` | A client-auth mode other than `.none` was given with an empty `ca_path` |
 | `TrustStoreLoadFailed` | The client CA bundle could not be read or parsed |
 | `TlsContextCreationFailed` | BoringSSL could not allocate the context |

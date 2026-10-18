@@ -33,7 +33,7 @@ value.
 | Symptom | Cause and fix |
 | --- | --- |
 | `curl` rejects the certificate | Ephemeral certificates are self-signed. Use `curl -k` for local work, or `mkcert`/your CA plus `init_https` for a trusted certificate |
-| `error.KeyMismatch` at startup | The PEM certificate and private key do not belong together |
+| `error.PrivateKeyLoadFailed` on a mismatched pair | The PEM certificate and private key do not belong together; BoringSSL rejects the key during load |
 | `error.CertificateLoadFailed` / `error.PrivateKeyLoadFailed` | The PEM path is unreadable or malformed; the certificate argument is a chain, leaf first |
 | `error.TrustStoreLoadFailed` with mTLS | The client CA bundle is unreadable or malformed |
 | `error.InvalidClientAuthConfig` with mTLS | A mode other than `.none` was configured with an empty `ca_path` |
@@ -83,6 +83,20 @@ See [client.md](client.md) for the full contract.
   libxev IOCP accept lifecycle blocks the runtime.
 - Affinity failures (restricted cpusets, macOS, other platforms) log once and
   leave workers unpinned instead of refusing startup.
+- `Cluster.enable_https` is startup-only: call it once after `configure` and
+  before `listen`. `error.TlsAlreadyEnabled` means a context is already
+  installed, `error.AlreadyListening` means `listen` ran first,
+  `error.ClusterRunning` means `run` is active, and
+  `error.ClusterDeinitialized` means the cluster was already released. Remove
+  the duplicate call, fix the order, or rebuild the cluster.
+- `error.CertificateLoadFailed` and `error.PrivateKeyLoadFailed` at enable time
+  map to the same PEM problems as the single-application TLS path: an
+  unreadable or malformed chain/key, or a pair that does not belong together
+  (BoringSSL rejects a mismatched key during load). A failed enable releases
+  only the contexts it created, so correct the files and retry;
+  `enable_https_ephemeral` avoids files for local work.
+- HTTP/3/QUIC clustering is not supported. `init_http3` and `listen_udp` remain
+  single-application APIs.
 - `Cluster.request_shutdown` requests shutdown for every worker;
   `App.request_shutdown` is the cross-thread-safe single-app entry, while
   `App.shutdown` must run on the owning loop thread.

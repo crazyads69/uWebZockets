@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.8.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.8.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.

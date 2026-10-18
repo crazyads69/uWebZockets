@@ -147,11 +147,52 @@ _ = try app.openapi("/openapi.json");
 
 ## Cluster
 
-`App.cluster(worker_count)` returns a heap-backed thread-per-core manager.
-Configure routes per worker, `listen` once, and `run` joins every worker.
-`Cluster.publish` broadcasts through bounded per-worker rings, and
-`Cluster.request_shutdown` drains all workers. See
-[architecture.md](architecture.md).
+`App.cluster(worker_count)` and
+`Server.builder(...).build_cluster(allocator, worker_count, options)` return a
+heap-backed thread-per-core manager. Configure routes per worker, `listen`
+once, and `run` joins every worker. `Cluster.publish` broadcasts through
+bounded per-worker rings, and `Cluster.request_shutdown` drains all workers.
+See [architecture.md](architecture.md).
+
+### TLS-enabled clusters
+
+```zig
+Cluster.enable_https(cert_path: [:0]const u8, key_path: [:0]const u8) !void
+Cluster.enable_https_ephemeral() !void
+```
+
+Call one of these exactly once after `configure` and before `listen`:
+
+```text
+build_cluster -> configure -> enable_https (or enable_https_ephemeral)
+              -> listen -> run -> request_shutdown or shutdown signal -> deinit
+```
+
+Each worker creates and owns one BoringSSL `SSL_CTX` before any listener
+exists; each connection creates its own `SSL` from that worker's context.
+Credential files are read once per worker at startup. TLS state is never
+shared between loops, and the request path adds no lock or allocation. The
+context is TLS 1.3 only with ALPN `h2` then `http/1.1`. `enable_https` does not
+configure client certificates.
+
+HTTP/3/QUIC clustering is not supported. `init_http3` and `listen_udp` remain
+single-application APIs, and a cluster listener is TCP/TLS only.
+
+| Error | Cause |
+| --- | --- |
+| `error.ClusterDeinitialized` | An enable call or `listen` was made after `deinit` |
+| `error.ClusterRunning` | `enable_https` was called while `run` was active |
+| `error.AlreadyListening` | `enable_https` was called after `listen` started |
+| `error.TlsAlreadyEnabled` | `enable_https` was called more than once |
+| `error.CertificateLoadFailed` / `error.PrivateKeyLoadFailed` | The PEM files could not be read or parsed; a mismatched key fails here too |
+| `error.TlsContextCreationFailed` / `error.ProtocolConfigurationFailed` | BoringSSL could not create or configure the context |
+| `error.ApplicationUnavailable` | A worker was already shutting down or deinitialized |
+
+A failed enable releases only the contexts it created and can be retried. Use
+`enable_https` with PEM files in production; `enable_https_ephemeral` generates
+a distinct development certificate per worker and can also return the
+`Ephemeral*` generation errors in [tls.md](tls.md#zig-error-reference). See
+[tls.md](tls.md#tls-enabled-clusters).
 
 ## Observability
 

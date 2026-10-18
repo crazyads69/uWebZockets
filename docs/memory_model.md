@@ -13,9 +13,15 @@ describes the layout, the startup slab, and the capacity contract.
 | Route registration | Fixed router storage only; lazily allocated RFC 7692 scratch is freed in `deinit` |
 | `init_tls` | BoringSSL-internal state, bounded per connection |
 | `init_https_ephemeral` / `init_http3_ephemeral` | One-time P-256 key and certificate generation; every generated object is released before startup |
+| `Cluster.enable_https` / `enable_https_ephemeral` | One BoringSSL `SSL_CTX` per worker plus startup credential loading or generation, allocated once outside the application slab; each connection creates its own `SSL` from that context |
 | `listen_udp` | QUIC engine pools created before the listener succeeds |
 | Request path | None |
 | `deinit` | Every slab released once through its owner |
+
+Cluster TLS does not change the startup slab or `slab_bytes()`: the per-worker
+`SSL_CTX` objects are created at enable time, before listening, and live in
+BoringSSL-owned memory. Each connection's `SSL` remains per-connection state,
+and the request path stays allocation-free.
 
 `Request.clone(allocator)` and `req.json(T, allocator)` are the only explicitly
 allocating public request APIs. Everything else returns `error.WouldBlock` or a
@@ -53,7 +59,8 @@ every other region is written before it is read.
 
 `App.init` and `App.init_configured` allocate this block once and free it once;
 `App.init_from_slab` accepts caller-owned storage with the same contract. Each
-worker in a cluster owns its own slab, so no region is shared between threads.
+worker in a cluster owns its own slab and, when TLS is enabled, its own
+`SSL_CTX`; no slab region or mutable TLS state is shared between threads.
 
 ## Capacity presets and the builder
 

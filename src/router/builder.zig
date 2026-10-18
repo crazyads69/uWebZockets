@@ -352,7 +352,9 @@ pub fn configured_builder(comptime config: ServerConfig) type {
         /// Every worker allocates its own slab, runs its own libxev loop, and
         /// binds the shared port through SO_REUSEPORT where the kernel supports
         /// it. Configure routes per worker with `Cluster.configure` before
-        /// calling `listen` and `run`.
+        /// calling `listen` and `run`. Call `Cluster.enable_https` (or
+        /// `enable_https_ephemeral`) after `configure` and before `listen` to
+        /// give every worker its own TLS context.
         pub fn build_cluster(
             self: Self,
             allocator: std.mem.Allocator,

@@ -3,6 +3,46 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.8.5] - 2026-10-18
+
+This release adds a supported TLS-enabled TCP cluster so HTTP/1.1 and HTTP/2
+over TLS can use the shared-nothing worker model that plaintext clusters
+already use, and fixes event-loop backend selection so multi-loop processes
+cannot mix epoll and io_uring loops. Single-application TLS constructors,
+existing cluster signatures, wire behavior, and default capacity semantics are
+unchanged.
+
+### Added
+
+- TLS-enabled TCP clusters: `Cluster.enable_https` and
+  `Cluster.enable_https_ephemeral` load or generate one private BoringSSL
+  context per worker before `listen`. ALPN keeps advertising `h2` ahead of
+  `http/1.1`, every connection creates its own `SSL` from its worker's
+  context, and no TLS state is shared between loops. A failed enable releases
+  exactly the contexts it created and is retryable; a repeated enable,
+  enable-after-listen, and enable on a running or released cluster report
+  named errors. QUIC/HTTP/3 clustering remains out of scope.
+- `tls_cluster` example and cluster TLS lifecycle, rollback, multi-worker
+  handshake, shared-port, and HTTP/2 ALPN regression tests.
+
+### Changed
+
+- Event loop backend selection (`src/core/loop.zig`) now runs exactly once per
+  process. libxev dispatches every loop operation through one process-global
+  backend tag, so later loops reuse the established selection instead of
+  re-probing and potentially creating a mixed epoll/io_uring group. The
+  io_uring-to-epoll fallback remains available while the first loop is
+  created; a backend changed after selection fails cleanly with
+  `error.BackendChanged`.
+- Additional io_uring loop creation retries the same backend briefly while the
+  kernel uncharges a closed ring, instead of changing the process backend
+  under existing loops.
+
+### Fixed
+
+- `Cluster.listen` on a released cluster silently succeeded without binding
+  any worker; it now reports `error.ClusterDeinitialized`.
+
 ## [1.8.0] - 2026-10-06
 
 This release removes per-response formatting overhead, gives the transport a

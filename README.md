@@ -145,6 +145,45 @@ allows it, and set `TCP_DEFER_ACCEPT` and `TCP_QUICKACK` to keep the loop
 asleep through handshakes and to avoid delayed-ACK stalls. Details and the
 platform matrix are in [docs/architecture.md](docs/architecture.md).
 
+A worker group can also terminate TLS itself. Call `enable_https` with PEM
+files, or `enable_https_ephemeral` for development, after `configure` and
+before `listen`; every worker then owns its own TLS context and loads or
+generates its credentials once at startup. TLS clusters are TCP-only:
+HTTP/3/QUIC clustering is not supported.
+
+```zig
+const std = @import("std");
+const uz = @import("uWebZockets");
+
+fn hello(_: *uz.Request, response: *uz.Response) void {
+    response.text("hello from a TLS worker") catch {};
+}
+
+pub fn main(init: std.process.Init) !void {
+    var cluster = try uz.Server.builder(init.io)
+        .with_max_clients(128)
+        .build_cluster(std.heap.page_allocator, 4, .{});
+    defer cluster.deinit();
+
+    const Group = @TypeOf(cluster);
+    try cluster.configure(struct {
+        fn routes(worker: *Group.Worker, index: usize) !void {
+            _ = index;
+            _ = try worker.get("/", hello);
+        }
+    }.routes);
+
+    try cluster.enable_https("certs/fullchain.pem", "certs/privkey.pem");
+    try cluster.listen("0.0.0.0", 8443);
+    try cluster.run();
+}
+```
+
+`zig build tls_cluster -Doptimize=ReleaseSafe` starts the equivalent example
+with four workers and per-worker ephemeral certificates on
+`https://127.0.0.1:8443/`. [docs/tls.md](docs/tls.md#tls-enabled-clusters)
+covers ownership, lifecycle, and error names.
+
 ## Configure capacities, not bytes
 
 `ServerConfig` presets and the fluent builder replace byte arithmetic with named
@@ -256,7 +295,7 @@ normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.8.0  ready in
+summary before the first accepting listener: `µWebZockets v1.8.5  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
@@ -374,6 +413,7 @@ timeouts, capacities, and failure kinds, is in
 | `zig build hello_world` | Minimal HTTP/1.1 route on `App` |
 | `zig build https_server` | HTTPS on port 3443 with an in-memory certificate |
 | `zig build shared_nothing_cluster` | Four pinned workers, one slab each |
+| `zig build tls_cluster` | Four TLS workers on port 8443 with per-worker certificates |
 | `zig build basic_microservice` | `Presets.microservice` with JSON helpers |
 | `zig build custom_builder` | Fluent overrides and the 50 MiB body path |
 | `zig build chat_server` | WebSocket pub/sub with bounded topics |
@@ -395,7 +435,7 @@ in [`examples/`](examples/), with walkthroughs in
 | [HTTP/3 and QUIC](docs/quic.md) | QPACK, WebTransport status, RFC 10008 `QUERY` |
 | [WebSocket](docs/websocket.md) | RFC 6455, RFC 7692 compression, pub/sub, heartbeats |
 | [JSON-RPC](docs/json_rpc.md) | Typed procedures, batches, capacities |
-| [TLS](docs/tls.md) | Ephemeral and production credentials, ALPN, 0-RTT, mTLS |
+| [TLS](docs/tls.md) | Ephemeral and production credentials, worker-group TLS, ALPN, 0-RTT, mTLS |
 | [Client](docs/client.md) | Outbound HTTP/1.1 client over TCP and TLS |
 | [Deployment](docs/deployment.md) | Credentials, capacity sizing, hardening, shutdown, platforms |
 | [Roadmap](docs/roadmap.md) | What 1.7.0 closed and which boundaries are deliberate |

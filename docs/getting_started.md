@@ -146,6 +146,11 @@ Every worker owns its own loop and slab, shares the port through
 `SO_REUSEPORT`, and is pinned to a physical core where the platform allows it.
 See [architecture.md](architecture.md).
 
+To terminate TLS in every worker, call `group.enable_https(...)` with PEM files,
+or `group.enable_https_ephemeral()` for development, after `configure` and
+before `listen`. Each worker owns its own TLS context; HTTP/3/QUIC clustering is
+not supported. See [tls.md](tls.md#tls-enabled-clusters).
+
 ## Run the examples
 
 | Step | Shows |
@@ -153,6 +158,7 @@ See [architecture.md](architecture.md).
 | `zig build hello_world` | Minimal HTTP/1.1 route on `App` |
 | `zig build https_server` | HTTPS on port 3443 with an in-memory certificate |
 | `zig build shared_nothing_cluster` | Four pinned workers, one slab each |
+| `zig build tls_cluster` | Four TLS workers on port 8443 with per-worker certificates |
 | `zig build basic_microservice` | `Presets.microservice` with JSON helpers |
 | `zig build custom_builder` | Fluent overrides and the 50 MiB body path |
 | `zig build chat_server` | WebSocket pub/sub with bounded topics |

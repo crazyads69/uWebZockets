@@ -32,11 +32,16 @@ capacity details and [protocols.md](protocols.md) for wire behavior.
 - binds the shared port with `SO_REUSEPORT`, letting the kernel load-balance
   incoming connections across listeners;
 - is pinned to a distinct physical core where the platform provides a
-  hard-affinity API.
+  hard-affinity API;
+- when TLS is enabled with `Cluster.enable_https` or
+  `enable_https_ephemeral`, creates and owns its own BoringSSL `SSL_CTX`
+  before listening and creates one `SSL` per accepted connection from it.
 
-No connection state, request buffer, queue, or completion is shared between
-workers. An accepted connection lands wholly inside the accepting worker's slab
-and is only ever touched by that worker's event loop.
+No connection state, request buffer, queue, completion, or mutable TLS state is
+shared between workers. An accepted connection lands wholly inside the
+accepting worker's slab and is only ever touched by that worker's event loop.
+TLS contexts are created before the first listener starts, so handshakes,
+sessions, and credential state stay confined to the owning loop.
 
 ```text
                SO_REUSEPORT
@@ -146,8 +151,12 @@ module cancels through the backend-aware shim.
 as the package's `xev` import. On Linux the loop probes io_uring first and
 degrades to epoll when the kernel or a container seccomp policy rejects the
 ring, so the server still starts on Docker Desktop and OrbStack without
-privileges; other targets keep libxev's static single-backend API. epoll
-offloads blocking file operations to an owned thread pool, which the loop
+privileges; other targets keep libxev's static single-backend API. Dynamic
+backend selection is process-global: the first loop selects it exactly once and
+later loops reuse that selection, and an attempted backend change fails with
+`error.BackendChanged` instead of mixing epoll and io_uring loops. The
+io_uring-to-epoll fallback therefore remains available only on the first loop.
+epoll offloads blocking file operations to an owned thread pool, which the loop
 creates and tears down around the event loop.
 
 A closed pool slot returns to the freelist only through
