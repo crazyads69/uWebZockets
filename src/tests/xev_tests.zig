@@ -15,6 +15,44 @@ test "xev: detect selects an available backend" {
     if (xev.backend() != previous) try std.testing.expect(xev.prefer(previous));
 }
 
+test "xev: ring retry policy bounds transient io_uring resource failures" {
+    if (comptime !@hasField(xev.Backend, "io_uring")) return error.SkipZigTest;
+
+    const backend = xev.Backend.io_uring;
+    try std.testing.expectEqual(
+        core_loop.RingRetryDecision.retry,
+        core_loop.ring_retry_decision(0, error.SystemResources, backend),
+    );
+    try std.testing.expectEqual(
+        core_loop.RingRetryDecision.retry,
+        core_loop.ring_retry_decision(core_loop.ring_init_attempts - 2, error.SystemResources, backend),
+    );
+    // The last attempt index gives up instead of starting another retry.
+    try std.testing.expectEqual(
+        core_loop.RingRetryDecision.give_up,
+        core_loop.ring_retry_decision(core_loop.ring_init_attempts - 1, error.SystemResources, backend),
+    );
+    try std.testing.expectEqual(
+        core_loop.RingRetryDecision.give_up,
+        core_loop.ring_retry_decision(core_loop.ring_init_attempts, error.SystemResources, backend),
+    );
+    // Only the transient resource error retries; every other error is terminal.
+    try std.testing.expectEqual(
+        core_loop.RingRetryDecision.give_up,
+        core_loop.ring_retry_decision(0, error.AccessDenied, backend),
+    );
+}
+
+test "xev: ring retry policy never retries a non-io_uring backend" {
+    if (comptime !@hasField(xev.Backend, "io_uring")) return error.SkipZigTest;
+    if (comptime !@hasField(xev.Backend, "epoll")) return error.SkipZigTest;
+
+    try std.testing.expectEqual(
+        core_loop.RingRetryDecision.give_up,
+        core_loop.ring_retry_decision(0, error.SystemResources, .epoll),
+    );
+}
+
 test "status: format_http1_framing does not reserve the worst-case digit count" {
     // A 78-byte reason phrase plus a one-digit length fits the 128-byte
     // response framing buffer, so the bound must count actual digits.

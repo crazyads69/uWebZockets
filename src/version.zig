@@ -9,7 +9,7 @@
 const std = @import("std");
 
 /// Parsed release version; `build.zig` injects this into the build graph.
-pub const semantic = std.SemanticVersion{ .major = 1, .minor = 8, .patch = 5 };
+pub const semantic = std.SemanticVersion{ .major = 1, .minor = 8, .patch = 9 };
 
 /// Dotted release string for the C ABI and OpenAPI defaults.
 pub const string = std.fmt.comptimePrint("{d}.{d}.{d}", .{

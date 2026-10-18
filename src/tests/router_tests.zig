@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const xev = @import("xev");
-const test_options = @import("test_options");
 const support = @import("test_support");
 const app = support.app;
 const config_module = support.config;
@@ -378,10 +377,6 @@ test "router: callback shutdown is drained by the active outer run" {
 }
 
 test "router: request_shutdown wakes a foreign-thread run" {
-    // The ASan and MSan runtimes abort on this toolchain's OS-thread teardown;
-    // the default and ReleaseSafe graphs still exercise the cross-thread path.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
-
     const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 0);
     var server = try TestApp.init(std.testing.io);
     defer server.deinit();

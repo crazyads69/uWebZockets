@@ -3,6 +3,81 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.8.9] - 2026-10-19
+
+This release resolves the v1.8.5 declared-limits handoff. The io_uring retry
+policy is now a pure, tested decision function; threaded tests, including the
+cluster TLS lifecycle tests, run under the address sanitizer instead of
+skipping; the cluster test plumbing reads listener ports and receive timeouts
+through Winsock on Windows; and `h2-tls-scaling-v1` fixes the HTTP/2-over-TLS
+characterization contract and runner. No exported Zig or C API changes. The
+release number follows the maintainer's declared-limits plan: the
+semver-minimal number after 1.8.5 would have been 1.8.6, and this deviation is
+recorded here.
+
+### Added
+
+- Pure io_uring loop-creation retry policy (`RingRetryDecision`,
+  `ring_retry_decision`) with deterministic tests for the transient
+  `error.SystemResources` case, the terminal error case, a non-io_uring
+  backend, and the `ring_init_attempts` bound. `src/core/loop.zig` keeps the
+  syscall and sleep in the thin wrapper, and the established backend still
+  never switches.
+- `h2-tls-scaling-v1` measurement contract
+  (`benchmarks/h2_tls_scaling_guarantee.md`,
+  `benchmarks/h2_tls_scaling_v1.env`, `scripts/benchmark_h2_tls.sh`). The
+  contract pins the generator, connection and stream levels, duration, warmup,
+  samples, statistic, exact request and response bytes, success definition,
+  and the single-application, plaintext-cluster, and TLS-cluster controls.
+  `http-throughput-v1` is untouched.
+- `tls_cluster` environment overrides for PEM credentials, bind address, port,
+  worker count, and connection capacity so the benchmark contract can run a
+  real-credential ReleaseFast cluster without adapter-side setup.
+- `TCP.listener_port` and `TCP.set_receive_timeout` platform helpers: the
+  Windows branches bind `ws2_32.getsockname` and `ws2_32.setsockopt`
+  `SO_RCVTIMEO` through the same extern pattern as the listener.
+
+### Changed
+
+- Threaded tests no longer skip sanitizer graphs: the TLS cluster handshake,
+  shared-port, and ALPN tests, the client loopback and TLS server tests, the
+  router cross-thread shutdown test, the cluster queue producer test, and the
+  affinity probe all execute under ASan. Sanitizer runs set
+  `use_sigaltstack=0`, because ASan's thread teardown unmaps whichever
+  alternate signal stack is installed and Zig's thread-local stack is not page
+  aligned; leak detection, `halt_on_error`, and every assertion stay in place.
+- The shared-port cluster TLS test retries up to eight fresh loopback port
+  reservations instead of two, so a stolen ephemeral port cannot turn a
+  transient race into a flake.
+- The Windows cluster TLS tests no longer return `error.WorkerPortUnsupported`;
+  the compile gate now covers the same port lookup and receive timeout paths
+  the Linux tests use.
+
+### Fixed
+
+- The ASan and UBSan test graph previously crashed at thread teardown with
+  `AddressSanitizer failed to deallocate ... (error code: 22)` because Zig's
+  thread-local alternate signal stack is not page aligned. Sanitizer runs now
+  set `use_sigaltstack=0`, leaving leak detection and every other check on.
+
+### Security
+
+- No security-sensitive behavior changed. The Windows test helpers only add
+  the missing `getsockname` and `SO_RCVTIMEO` bindings used by tests.
+
+### Limits
+
+- The 256- and 1,024-connection `h2-tls-scaling-v1` rows and the HttpArena
+  `baseline-h2` restoration remain maintainer measurement tasks: they need a
+  quiet host, a released tag, and the external adapter repository. The
+  contract, runner, and real-credential example land here; no measured result
+  is claimed.
+- Windows runtime coverage stays compile-only. The two defects recorded in
+  [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details) - the
+  pinned libxev IOCP accept-socket reuse and the queued-completion close path -
+  still block the first native accept loop, so no runtime job is added and no
+  Windows binaries are published.
+
 ## [1.8.5] - 2026-10-18
 
 This release adds a supported TLS-enabled TCP cluster so HTTP/1.1 and HTTP/2

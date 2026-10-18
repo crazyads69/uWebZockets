@@ -67,8 +67,10 @@ pub fn inject(
         .sanitize_c = if (sanitizer.sanitize) .full else null,
         .omit_frame_pointer = if (sanitizer.instrument_c) false else null,
     });
-    // Tests that spawn OS threads are skipped when the ASan runtime is active:
-    // the sanitizer's thread teardown aborts the test binary on this toolchain.
+    // Sanitizer runs set `use_sigaltstack=0` in the run environment: ASan
+    // installs an alternate signal stack per thread and unmaps whichever stack
+    // it finds on thread teardown, while Zig's TLS-backed stack is not page
+    // aligned. Leak detection and halt-on-error stay enabled.
     const test_options = b.addOptions();
     test_options.addOption(bool, "sanitize", sanitizer.sanitize);
     test_options.addOption(bool, "memory_sanitize", sanitizer.memory_sanitize);

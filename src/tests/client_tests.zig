@@ -5,7 +5,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const c = @import("c");
 const support = @import("test_support");
-const test_options = @import("test_options");
 
 const client = support.client;
 const http1 = client.http1;
@@ -754,8 +753,6 @@ fn serve_tls(
 }
 
 test "client: fetches a content-length response over loopback" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     const wire = "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nX-Test: yes\r\n\r\nhello world";
     var port_slot = PortSlot{};
     var server = PlainServer{ .port_slot = &port_slot, .response = wire };
@@ -784,8 +781,6 @@ test "client: fetches a content-length response over loopback" {
 }
 
 test "client: fetches a chunked response over loopback" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     const wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" ++
         "5\r\nhello\r\n" ++
         "1\r\n!\r\n" ++
@@ -811,8 +806,6 @@ test "client: fetches a chunked response over loopback" {
 }
 
 test "client: reports a protocol failure for a malformed response" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     var port_slot = PortSlot{};
     var server = PlainServer{ .port_slot = &port_slot, .response = "GARBAGE\r\n\r\n" };
     const thread = try std.Thread.spawn(.{}, PlainServer.run, .{&server});
@@ -834,8 +827,6 @@ test "client: reports a protocol failure for a malformed response" {
 }
 
 test "client: reports closed when the peer truncates the body" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     const wire = "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc";
     var port_slot = PortSlot{};
     var server = PlainServer{ .port_slot = &port_slot, .response = wire };
@@ -858,8 +849,6 @@ test "client: reports closed when the peer truncates the body" {
 }
 
 test "client: times out a stalled response" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     var port_slot = PortSlot{};
     var stop = std.atomic.Value(bool).init(false);
     var server = StallServer{ .port_slot = &port_slot, .stop = &stop };
@@ -883,8 +872,6 @@ test "client: times out a stalled response" {
 }
 
 test "client: rejects a fetch when inflight capacity is reached" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     const wire = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
     var port_slot = PortSlot{};
     var server = PlainServer{ .port_slot = &port_slot, .response = wire };
@@ -949,8 +936,6 @@ test "client: tls verification without a ca path returns the named error" {
 }
 
 test "client: tls verification rejects an untrusted trust anchor" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     var directory = std.testing.tmpDir(.{});
     defer directory.cleanup();
 
@@ -992,8 +977,6 @@ test "client: tls verification rejects an untrusted trust anchor" {
 }
 
 test "client: tls verification rejects the wrong server name" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     var directory = std.testing.tmpDir(.{});
     defer directory.cleanup();
 
@@ -1033,8 +1016,6 @@ test "client: tls verification rejects the wrong server name" {
 }
 
 test "client: rejects a tls 1.2 only server" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     var directory = std.testing.tmpDir(.{});
     defer directory.cleanup();
 
@@ -1079,8 +1060,6 @@ test "client: rejects a tls 1.2 only server" {
 }
 
 test "client: a failed fetch releases its slot for reuse" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     var instance = try client.client(1).init(std.testing.io);
     defer instance.deinit();
 
@@ -1128,8 +1107,6 @@ const OutcomeCapture = struct {
 };
 
 test "client: fetches over tls without verification" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     const wire = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
     var port_slot = PortSlot{};
     var server = TlsServer{ .port_slot = &port_slot, .response = wire, .ca_path = null };
@@ -1159,8 +1136,6 @@ test "client: fetches over tls without verification" {
 }
 
 test "client: fetches over tls with a generated trust anchor" {
-    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
     var directory = std.testing.tmpDir(.{});
     defer directory.cleanup();
 

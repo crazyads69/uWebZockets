@@ -9,7 +9,26 @@ const selection_established: u8 = 1;
 /// a closed ring asynchronously, so rapid loop churn can report a transient
 /// `error.SystemResources`. Retry the same backend a bounded number of times;
 /// falling back to another backend after selection is never allowed.
-const ring_init_attempts: u8 = 32;
+pub const ring_init_attempts: u8 = 32;
+
+/// Whether an established backend retries loop creation after a failed
+/// attempt.
+pub const RingRetryDecision = enum { retry, give_up };
+
+/// Pure retry policy for `init_established`: only a transient io_uring
+/// `error.SystemResources` below `ring_init_attempts` may retry. `attempt` is
+/// the zero-based index of the attempt that just failed.
+pub fn ring_retry_decision(
+    attempt: u8,
+    err: anyerror,
+    backend: xev.Backend,
+) RingRetryDecision {
+    if (err != error.SystemResources) return .give_up;
+    if (comptime !@hasField(xev.Backend, "io_uring")) return .give_up;
+    if (backend != .io_uring) return .give_up;
+    if (attempt +| 1 >= ring_init_attempts) return .give_up;
+    return .retry;
+}
 
 /// libxev's dynamic API keeps the selected backend in one process-global
 /// variable and dispatches every loop operation through it, so every loop in
@@ -100,9 +119,7 @@ fn init_established() !Loop {
     var attempts: u8 = 0;
     while (true) : (attempts += 1) {
         return create_loop(false) catch |err| {
-            if (err != error.SystemResources) return err;
-            if (xev.backend() != .io_uring) return err;
-            if (attempts + 1 >= ring_init_attempts) return err;
+            if (ring_retry_decision(attempts, err, xev.backend()) == .give_up) return err;
             wait_for_ring_release();
             continue;
         };

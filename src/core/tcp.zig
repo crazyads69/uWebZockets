@@ -1861,6 +1861,76 @@ fn set_reuse_address_windows(fd: std.os.windows.HANDLE) !void {
     if (result != 0) return error.SocketOptionFailed;
 }
 
+/// Winsock `getsockname` signature; referenced only by the Windows branch.
+const WinsockGetsocknameFn = *const fn (
+    usize,
+    *std.os.windows.ws2_32.sockaddr,
+    *c_int,
+) callconv(.winapi) c_int;
+
+const winsock_getsockname = @extern(WinsockGetsocknameFn, .{
+    .name = "getsockname",
+    .library_name = "ws2_32",
+});
+
+/// Returns the port a bound listener is accepting on.
+///
+/// `std.posix.system` exposes no sockname entry point with a usable Windows
+/// descriptor, so the winsock symbol is bound here like the other options.
+pub fn listener_port(server: *const TcpServer) !u16 {
+    if (builtin.os.tag == .windows) {
+        var address: std.os.windows.ws2_32.sockaddr.in = undefined;
+        var length: c_int = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
+        if (winsock_getsockname(
+            @intFromPtr(xev.tcp_fd(server.listener)),
+            @ptrCast(&address),
+            &length,
+        ) != 0) return error.ListenerAddressUnavailable;
+        return std.mem.bigToNative(u16, address.port);
+    }
+
+    var address: std.posix.sockaddr.in = undefined;
+    var length: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.in);
+    switch (std.posix.errno(std.posix.system.getsockname(
+        xev.tcp_fd(server.listener),
+        @ptrCast(&address),
+        &length,
+    ))) {
+        .SUCCESS => {},
+        else => return error.ListenerAddressUnavailable,
+    }
+    return std.mem.bigToNative(u16, address.port);
+}
+
+/// Bounds one blocking receive so a stalled peer fails a read instead of
+/// hanging the caller. Windows receives a millisecond `DWORD`; POSIX receives
+/// a `timeval`.
+pub fn set_receive_timeout(fd: SocketFd, milliseconds: u32) !void {
+    if (builtin.os.tag == .windows) {
+        var value = milliseconds;
+        const result = winsock_setsockopt(
+            @intFromPtr(fd),
+            std.os.windows.ws2_32.SOL.SOCKET,
+            std.os.windows.ws2_32.SO.RCVTIMEO,
+            @ptrCast(&value),
+            @sizeOf(u32),
+        );
+        if (result != 0) return error.SocketOptionFailed;
+        return;
+    }
+
+    var timeout = std.posix.timeval{
+        .sec = @intCast(milliseconds / std.time.ms_per_s),
+        .usec = @intCast((milliseconds % std.time.ms_per_s) * std.time.us_per_ms),
+    };
+    try std.posix.setsockopt(
+        fd,
+        std.posix.SOL.SOCKET,
+        std.posix.SO.RCVTIMEO,
+        std.mem.asBytes(&timeout),
+    );
+}
+
 /// Descriptor type libxev exposes for TCP and UDP handles on this platform.
 pub const SocketFd = if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.posix.fd_t;
 

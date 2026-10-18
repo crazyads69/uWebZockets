@@ -71,7 +71,9 @@ defects, in order of encounter.
 
 The temporary probe branch was discarded; no dependency fork or vendored
 libxev change is carried in this release. Revisiting Windows runtime support
-starts from these two findings.
+starts from these two findings. The TLS cluster test plumbing already binds
+`getsockname` and `SO_RCVTIMEO` through ws2_32, so the only remaining Windows
+runtime work is the accept lifecycle and queued-completion fixes above.
 
 ## Near-term direction
 

@@ -81,6 +81,12 @@ instrumenting the pinned C/C++ libraries and local C shim. The MSan mode
 rebuilds those components with origin tracking and executes a focused C
 dependency-boundary smoke; it does not instrument Zig code or run the complete
 C ABI suite. Both modes use isolated vendor caches and run as separate CI steps.
+Threaded tests, including the cluster TLS lifecycle tests, run under ASan with
+`use_sigaltstack=0`: ASan installs an alternate signal stack per thread and
+unmaps whichever stack it finds on thread teardown, while Zig 0.16's
+thread-local stack is not page aligned. Leak detection, `halt_on_error`, and
+every other check stay enabled; only the deep-stack-overflow reporting path
+changes.
 
 Outside Nix, also pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`. If
 that runtime requires a different glibc than the host, pass the matching

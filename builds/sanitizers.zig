@@ -219,6 +219,7 @@ pub fn add_run_artifact(
     const dynamic_linker = sanitizer.dynamic_linker orelse {
         const command = b.addRunArtifact(artifact);
         command.setEnvironmentVariable("LD_PRELOAD", sanitizer.shared_object);
+        disable_sanitizer_alt_stack(b, command);
         return command;
     };
     if (artifact.kind == .@"test") {
@@ -230,7 +231,9 @@ pub fn add_run_artifact(
             sanitizer.shared_object,
             null,
         });
-        return b.addRunArtifact(artifact);
+        const command = b.addRunArtifact(artifact);
+        disable_sanitizer_alt_stack(b, command);
+        return command;
     }
     const command = b.addSystemCommand(&.{
         dynamic_linker,
@@ -240,5 +243,26 @@ pub fn add_run_artifact(
         sanitizer.shared_object,
     });
     command.addArtifactArg(artifact);
+    disable_sanitizer_alt_stack(b, command);
     return command;
+}
+
+/// ASan installs an alternate signal stack for every thread and unmaps
+/// whichever stack is installed when that thread exits. Zig 0.16's test runner
+/// ignores a test root's `std_options.signal_stack_size`, so its thread-local
+/// stack is installed, is not page aligned, and makes ASan abort the test
+/// binary with a failed `munmap`. Disabling only the sanitizer's alternate
+/// stack keeps leak detection, `halt_on_error`, and every check in place; the
+/// affected path is the deep-stack-overflow handler. An existing
+/// `use_sigaltstack` value in `ASAN_OPTIONS` is preserved.
+fn disable_sanitizer_alt_stack(b: *std.Build, command: *std.Build.Step.Run) void {
+    const existing = b.graph.environ_map.get("ASAN_OPTIONS");
+    const value = if (existing) |options|
+        if (std.mem.indexOf(u8, options, "use_sigaltstack=") != null)
+            options
+        else
+            b.fmt("{s}:use_sigaltstack=0", .{options})
+    else
+        "use_sigaltstack=0";
+    command.setEnvironmentVariable("ASAN_OPTIONS", value);
 }

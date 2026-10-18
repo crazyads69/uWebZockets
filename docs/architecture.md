@@ -156,6 +156,10 @@ backend selection is process-global: the first loop selects it exactly once and
 later loops reuse that selection, and an attempted backend change fails with
 `error.BackendChanged` instead of mixing epoll and io_uring loops. The
 io_uring-to-epoll fallback therefore remains available only on the first loop.
+An established io_uring loop retries loop creation at most 32 times with a
+1 ms delay between attempts while the kernel uncharges a closed ring
+(`error.SystemResources`); any other error, backend, or exhausted attempt
+bound returns the original error instead of switching backends.
 epoll offloads blocking file operations to an owned thread pool, which the loop
 creates and tears down around the event loop.
 

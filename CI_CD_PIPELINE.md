@@ -93,7 +93,13 @@ CI enables ASan leak detection and makes both ASan and UBSan fail fast. A
 separate x86_64 Linux pass rebuilds the pinned C/C++ dependencies and local C
 shim with MemorySanitizer and origin tracking, then runs a focused C
 dependency-boundary smoke. It does not instrument Zig code or execute the full
-C ABI suite, and MSan cannot be combined with ASan.
+C ABI suite, and MSan cannot be combined with ASan. Full-suite MemorySanitizer
+coverage of the TLS and cluster paths stays out of scope while BoringSSL is
+built uninstrumented; the dependency-boundary smoke remains the MSan contract.
+The in-tree test runs set `use_sigaltstack=0` for sanitizer builds, because
+ASan's thread teardown munmaps whichever alternate signal stack it finds and
+Zig's thread-local stack is not page aligned; leak detection and halt-on-error
+stay enabled.
 
 The fuzz job runs Zig's native fuzzer for 100,000 iterations over bounded
 HTTP, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.
@@ -181,7 +187,12 @@ Windows close path treats queued completions as active, so a canceled-before-
 submission write never delivers its callback and the connection slot never
 returns to the pool. Every server listener on Windows goes through that accept
 path, so a native runtime gate cannot pass until both are fixed. The workflow
-therefore remains compile-only, and no Windows binaries are published.
+therefore remains compile-only, and no Windows binaries are published. The
+cluster TLS test plumbing no longer returns `error.WorkerPortUnsupported` on
+Windows: the tests read the bound port through `ws2_32.getsockname` and bound
+one client read with `SO_RCVTIMEO` through the same winsock binding used by the
+listener, so the compile gate covers that path and a runtime job only needs the
+two blockers removed.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,
@@ -217,6 +228,13 @@ and contract provenance and are described by the published v1 schema.
 The tolerance accounts for shared-runner variance. This is an explicit relative
 regression guarantee, not a portable absolute-capacity claim; absolute history
 must only be compared within matching runner and toolchain cohorts.
+
+The separate [`h2-tls-scaling-v1`](benchmarks/h2_tls_scaling_guarantee.md)
+contract characterizes HTTP/2-over-TLS at 64 through 2,048 connections against
+the single-application, plaintext-cluster, and TLS-cluster controls. It ships
+with `scripts/benchmark_h2_tls.sh` and is intentionally not wired into
+`benchmark.yml`: the 1,024-connection rows need a quiet dedicated host, and
+`http-throughput-v1` remains the only CI-enforced guarantee.
 
 ## Publishing
 

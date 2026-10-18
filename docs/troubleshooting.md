@@ -99,7 +99,10 @@ See [client.md](client.md) for the full contract.
   single-application APIs.
 - `Cluster.request_shutdown` requests shutdown for every worker;
   `App.request_shutdown` is the cross-thread-safe single-app entry, while
-  `App.shutdown` must run on the owning loop thread.
+  `App.shutdown` must run on the owning loop thread. The cluster method
+  returns `void` and cannot report a lifecycle error, so calling it after
+  `deinit` is a documented no-op on the released worker slice; check your own
+  generation counter or rebuild the cluster instead of awaiting an error.
 - On Linux the loop uses io_uring when the kernel allows it and falls back to
   epoll when a container seccomp policy or old kernel rejects the ring, so
   Docker Desktop and OrbStack hosts no longer need `--privileged` just to

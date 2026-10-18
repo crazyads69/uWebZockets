@@ -1,12 +1,10 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const c = @import("c");
 const support = @import("test_support");
-const test_options = @import("test_options");
-const xev = @import("xev");
 
 const tls = support.tls;
 const http2 = support.http2;
+const tcp = support.tcp;
 const net = std.Io.net;
 
 test "tls: client-auth modes disable early data" {
@@ -716,19 +714,8 @@ const ClusterRunner = struct {
 
 /// Returns the port one worker's listener is bound to.
 fn worker_port(worker: *const ClusterTestApp) !u16 {
-    if (builtin.os.tag == .windows) return error.WorkerPortUnsupported;
-    const server = worker.server orelse return error.WorkerNotListening;
-    var address: std.posix.sockaddr.in = undefined;
-    var address_length: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.in);
-    switch (std.posix.errno(std.posix.system.getsockname(
-        xev.tcp_fd(server.listener),
-        @ptrCast(&address),
-        &address_length,
-    ))) {
-        .SUCCESS => {},
-        else => return error.ListenerAddressUnavailable,
-    }
-    return std.mem.bigToNative(u16, address.port);
+    if (worker.server == null) return error.WorkerNotListening;
+    return tcp.listener_port(&worker.server.?);
 }
 
 /// Reserves one loopback port, then closes the listener so the cluster can
@@ -738,6 +725,25 @@ fn reserve_loopback_port() !u16 {
     var server = try address.listen(std.testing.io, .{});
     defer server.deinit(std.testing.io);
     return server.socket.address.getPort();
+}
+
+/// Binds a cluster to a freshly reserved loopback port.
+///
+/// Another process can steal a reservation between close and bind, so a
+/// bounded number of fresh reservations retries before the test reports the
+/// last conflict instead of flaking on a single race.
+fn listen_on_reserved_port(group: *ClusterTestApp.cluster(2)) !u16 {
+    var last_error: anyerror = error.AddressInUse;
+    for (0..8) |_| {
+        const port = try reserve_loopback_port();
+        group.listen("127.0.0.1", port) catch |err| {
+            if (err != error.AddressInUse) return err;
+            last_error = err;
+            continue;
+        };
+        return port;
+    }
+    return last_error;
 }
 
 /// Runs one CA-verified HTTP/1.1 exchange against a cluster worker port.
@@ -1152,11 +1158,6 @@ test "tls cluster: plaintext cluster lifecycle is unchanged" {
 }
 
 test "tls cluster: each worker completes a real client handshake on its own context" {
-    // The ASan and MSan runtimes abort this binary while tearing down OS threads.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
-    // The verified client reads one worker's bound port and arms SO_RCVTIMEO.
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1196,11 +1197,6 @@ test "tls cluster: each worker completes a real client handshake on its own cont
 }
 
 test "tls cluster: shared port serves TLS connections" {
-    // The ASan and MSan runtimes abort this binary while tearing down OS threads.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
-    // The verified client arms SO_RCVTIMEO, which std.posix lacks on Windows.
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1218,21 +1214,7 @@ test "tls cluster: shared port serves TLS connections" {
 
     try group.configure(configure_cluster_routes);
     try group.enable_https(paths.server_certificate, paths.server_key);
-
-    // A reserved port can race another process between close and bind, so one
-    // fresh reservation retries before the test reports failure.
-    var port: u16 = 0;
-    var bound = false;
-    for (0..2) |_| {
-        port = try reserve_loopback_port();
-        group.listen("127.0.0.1", port) catch |err| {
-            if (err == error.AddressInUse) continue;
-            return err;
-        };
-        bound = true;
-        break;
-    }
-    if (!bound) return error.AddressInUse;
+    const port = try listen_on_reserved_port(&group);
 
     var runner = ClusterRunner{ .group = &group };
     const thread = try std.Thread.spawn(.{}, ClusterRunner.run, .{&runner});
@@ -1251,12 +1233,6 @@ test "tls cluster: shared port serves TLS connections" {
 }
 
 test "tls cluster: h2 ALPN negotiates on a TLS cluster worker" {
-    // The ASan and MSan runtimes abort this binary while tearing down OS threads.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
-    // SO_RCVTIMEO keeps one stalled h2 read from hanging the test; std.posix
-    // does not expose it on Windows.
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
-
     var group = try init_test_cluster();
     defer group.deinit();
 
@@ -1355,16 +1331,7 @@ fn attach_client_bio(ssl: *c.SSL) !*c.BIO {
 
 /// Bounds one blocking client read so a stalled server fails the test.
 fn set_cluster_client_timeout(handle: net.Socket.Handle) !void {
-    // SO_RCVTIMEO keeps one stalled read from hanging the test; std.posix
-    // does not expose it on Windows.
-    if (builtin.os.tag == .windows) return;
-    var timeout = std.posix.timeval{ .sec = 5, .usec = 0 };
-    try std.posix.setsockopt(
-        handle,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.RCVTIMEO,
-        std.mem.asBytes(&timeout),
-    );
+    return tcp.set_receive_timeout(handle, 5_000);
 }
 
 fn drive_client_handshake(

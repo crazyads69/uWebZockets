@@ -152,6 +152,9 @@ _ = try app.openapi("/openapi.json");
 heap-backed thread-per-core manager. Configure routes per worker, `listen`
 once, and `run` joins every worker. `Cluster.publish` broadcasts through
 bounded per-worker rings, and `Cluster.request_shutdown` drains all workers.
+Because it returns `void`, `request_shutdown` after `deinit` is a documented
+non-erroring no-op: the worker slice has already been released, so rebuild the
+cluster instead of relying on shutdown to report a lifecycle error.
 See [architecture.md](architecture.md).
 
 ### TLS-enabled clusters

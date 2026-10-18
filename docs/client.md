@@ -230,6 +230,6 @@ builder adds brackets to the `Host` header.
 The client suite covers the pure response parser (framing, trailers, 1xx,
 malformed input), request-builder validation, TLS trust failures, slot reuse
 after a failed fetch, and loopback end-to-end fetches over plaintext and TLS.
-The loopback tests spawn a peer thread and are skipped under the ASan and MSan
-runtimes, which abort on this toolchain's thread teardown; the parser, builder,
-and failure paths run in every mode.
+The loopback tests spawn a peer thread and run in every sanitizer graph; ASan
+runs set `use_sigaltstack=0` because Zig's thread-local alternate signal stack
+is not page aligned for ASan's thread teardown.

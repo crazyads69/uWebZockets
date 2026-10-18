@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const support = @import("test_support");
-const test_options = @import("test_options");
 
 const affinity = support.affinity;
 
@@ -49,10 +48,6 @@ test "cluster queue: bounded producers receive ClusterQueueFull" {
 }
 
 test "cluster queue: many producers feed one consumer without a lock" {
-    // The ASan runtime aborts this binary while tearing down OS threads; the
-    // default, ReleaseSafe, and fuzz graphs still exercise the concurrent path.
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
-
     const Queue = support.cluster.message_queue(32);
     var queue = Queue{};
 
@@ -106,8 +101,6 @@ test "cluster queue: many producers feed one consumer without a lock" {
 }
 
 test "affinity: physical cores are discoverable and pinning is best effort" {
-    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
-
     const selection = affinity.CoreSelection.init();
     if (builtin.os.tag == .linux or builtin.os.tag == .windows) {
         try std.testing.expect(selection.len > 0);
