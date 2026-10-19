@@ -33,3 +33,12 @@ certs/
 
 # generated knowledge graph (graphify)
 graphify-out/
+
+# local planning notes
+TODO.md
+
+# benchmark results: commit one archive plus README and manifest
+benchmarks/results/**/*.txt
+benchmarks/results/**/*.log
+benchmarks/results/**/*.tsv
+benchmarks/results/**/*.bin

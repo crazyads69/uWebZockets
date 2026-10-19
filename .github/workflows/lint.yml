@@ -44,7 +44,7 @@ jobs:
       - name: Check repository conventions
         run: sh scripts/check_conventions.sh
 
-      - name: Check vendored lsquic overlay
+      - name: Check vendored overlays
         run: sh scripts/check_vendor_overlay.sh
 
       - name: Check release metadata

@@ -79,8 +79,9 @@ See [client.md](client.md) for the full contract.
 - Workers share the port through `SO_REUSEPORT` on Linux and macOS, and
   `SO_REUSEADDR` on Windows. On Windows the kernel distribution across
   listeners is unspecified; treat it as a graceful fallback, not a
-  load-balancing path. Windows is not officially supported because the pinned
-  libxev IOCP accept lifecycle blocks the runtime.
+  load-balancing path. The 1.9.0 accept overlay and queued-close fix remove the
+  runtime blockers; official support follows a green native Windows test job
+  for the release commit.
 - Affinity failures (restricted cpusets, macOS, other platforms) log once and
   leave workers unpinned instead of refusing startup.
 - `Cluster.enable_https` is startup-only: call it once after `configure` and
@@ -101,8 +102,10 @@ See [client.md](client.md) for the full contract.
   `App.request_shutdown` is the cross-thread-safe single-app entry, while
   `App.shutdown` must run on the owning loop thread. The cluster method
   returns `void` and cannot report a lifecycle error, so calling it after
-  `deinit` is a documented no-op on the released worker slice; check your own
-  generation counter or rebuild the cluster instead of awaiting an error.
+  `deinit` is a documented no-op on the released worker slice; the method
+  carries an explicit deinitialized guard. Check your own generation counter or
+  rebuild the cluster instead of awaiting an error; see
+  [ADR 0003](adr/0003-tls-cluster-operational-boundaries.md).
 - On Linux the loop uses io_uring when the kernel allows it and falls back to
   epoll when a container seccomp policy or old kernel rejects the ring, so
   Docker Desktop and OrbStack hosts no longer need `--privileged` just to

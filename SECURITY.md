@@ -114,22 +114,22 @@ detection on native Linux while instrumenting the pinned C/C++ dependencies
 and local C shim. A separate, mutually exclusive x86_64 Linux
 MemorySanitizer job rebuilds those C/C++ components with origin tracking and
 executes a focused dependency-boundary smoke. It does not claim MSan
-instrumentation of Zig code or full C ABI behavior. Google
+instrumentation of Zig code or full C ABI behavior; the dependency-boundary
+smoke is the permanent MSan contract dated 2026-10-19. Google
 OSS-Fuzz/libFuzzer entrypoints exercise HTTP
 framing, WebSocket masking, and QUIC/WebTransport packet boundaries; local
 deterministic smoke seeds are retained. Autobahn, h1spec, and the pinned
 curl/ngtcp2 plus aioquic HTTP/3 gate add protocol coverage. Deployments should
 still perform workload-specific QUIC load testing.
 
-Cross-platform support covers Linux and macOS on `x86_64` and `aarch64`;
-Windows (`x86_64-windows-gnu` / MinGW ABI), FreeBSD, NetBSD, OpenBSD, and
-DragonFlyBSD share the build graph but are not officially supported. A
-dedicated native Windows job compiles the complete ReleaseSafe test/ABI graph
-and the static libraries without executing them because the pinned libxev IOCP
-accept lifecycle blocks the runtime; no Windows binaries are published.
-The BSD targets have no dedicated runtime CI coverage. Treat unverified
-platforms as community builds and validate them against your own deployment
-requirements.
+Cross-platform support covers Linux and macOS on `x86_64` and `aarch64`.
+Windows (`x86_64-windows-gnu` / MinGW ABI) has a native job that compiles the
+complete ReleaseSafe test/ABI graph, builds the static libraries, and runs the
+test suite; official support follows a green runtime job for the release
+commit. No Windows binaries are published. FreeBSD, NetBSD, OpenBSD, and
+DragonFlyBSD share the build graph but are not officially supported and have
+no dedicated runtime CI coverage. Treat unverified platforms as community
+builds and validate them against your own deployment requirements.
 
 ## Disclosure
 

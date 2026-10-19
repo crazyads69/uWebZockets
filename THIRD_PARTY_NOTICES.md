@@ -29,3 +29,13 @@ the pinned API. `scripts/check_vendor_overlay.sh` verifies the overlay against
 the audit patch, and the build no longer runs `patch` or Perl. The h1spec CI job
 applies `patches/h1spec_deno_cleanup.patch` only to close and unreference
 completed test connections. The upstream sources remain unchanged.
+
+`vendor/libxev_overlay/src/backend/iocp.zig` applies
+`patches/libxev_iocp_accept_socket.patch` to the pinned libxev revision. The
+overlay clears the IOCP accept socket after `AcceptEx` transfers it to the
+completion, on both success and error paths, so a persistent accept loop cannot
+reuse the connected socket. `scripts/check_vendor_overlay.sh` regenerates the
+overlay from the pinned source and audit patch; the Zig package cache and the
+upstream sources remain unchanged. The patch is carried only until the upstream
+revision contains the fix, which is tracked in
+[ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md).

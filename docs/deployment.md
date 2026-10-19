@@ -23,11 +23,15 @@ the framework expects you to configure.
   `OPTIONS`) before the handshake confirms; anything else gets `425 Too Early`.
   QUIC keeps early data disabled.
 - There is no hot certificate reload. Rotate by rolling a new process; keep the
-  old one draining until it exits. See [tls.md](tls.md).
+  old one draining until it exits. This is a dated decision, not an omission;
+  see [ADR 0003](adr/0003-tls-cluster-operational-boundaries.md) and
+  [tls.md](tls.md).
 - A TLS cluster follows `build_cluster` -> `configure` -> `enable_https` ->
   `listen` -> `run` -> `request_shutdown` or a shutdown signal -> `deinit`.
   Call one enable function exactly once before `listen`; each worker reads the
-  PEM files once at startup, so credential rotation is a rolling restart.
+  PEM files once at startup, so credential rotation is a rolling restart. Hot
+  reload remains out of scope under
+  [ADR 0003](adr/0003-tls-cluster-operational-boundaries.md).
 - `enable_https_ephemeral` generates a distinct self-signed certificate per
   worker and is for development only. `enable_https` does not configure client
   certificates. HTTP/3/QUIC clustering is not supported; `init_http3` and
@@ -111,17 +115,21 @@ try app.run();
 ## 6. Platforms
 
 | Supported | Linux and macOS on `x86_64` and `aarch64` | Built and tested by CI |
-| Not officially supported | `x86_64-windows-gnu` | Compile-checked only: the pinned libxev IOCP accept path is blocked upstream (see [roadmap.md](roadmap.md#windows-runtime-blocker-details)); no runtime behavior is claimed |
+| Native Windows coverage | `x86_64-windows-gnu` | Compile gates plus a `windows-2025` runtime test job; official support follows a green run for the release commit |
 | Community | FreeBSD, NetBSD, OpenBSD, DragonFlyBSD | Share the build graph without dedicated CI |
 
 - Shared-nothing clustering is fully supported on Linux. macOS runs unpinned
   because the platform exposes no hard-affinity API. The Windows
-  `SO_REUSEADDR` fallback remains compiled but is not officially supported.
-- Windows QUIC uses IOCP receives and Winsock sends, but Windows runtime
-  behavior is not claimed until the libxev accept blocker is fixed.
+  `SO_REUSEADDR` fallback remains compiled and is exercised by the native job.
+- Windows QUIC uses IOCP receives and Winsock sends; the native test job covers
+  the transport path. The 1.9.0 accept and queued-close fixes are recorded in
+  [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md).
 - Sanitizer coverage is native Linux only. MemorySanitizer instruments the
-  pinned C/C++ dependencies, not Zig code; plan an independent review for
-  Zig-side memory questions.
+  pinned C/C++ dependencies, not Zig code. The dependency-boundary smoke is the
+  permanent MSan contract as of 2026-10-19: Zig 0.16 emits no MSan
+  instrumentation, and full BoringSSL instrumentation would need a second TLS
+  toolchain. Plan an independent review for Zig-side memory questions. See
+  [CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md#memorysanitizer-contract-permanent-2026-10-19).
 
 ## 7. Dependencies and reproducibility
 

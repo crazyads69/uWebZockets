@@ -7,9 +7,9 @@ the [README](../README.md) for the quick start and the other
 ## Requirements
 
 - Zig 0.16.0
-- A build target: Linux or macOS are supported; FreeBSD, NetBSD, OpenBSD,
-  DragonFlyBSD, and Windows are community or compile-only targets (see
-  [Platform support](#platform-support))
+- A build target: Linux or macOS are supported; Windows has native compile and
+  runtime jobs; FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD are community targets
+  (see [Platform support](#platform-support))
 - The `vendor/h1spec` submodule for the h1spec development suite
 
 Zig fetches and compiles BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and
@@ -130,9 +130,9 @@ zlib prefix. A musl cross build is one command:
 zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSafe
 ```
 
-Windows compilation checks use the same package and require no MinGW zlib
-installation. Windows is not officially supported; the commands document the
-compile-only path:
+Windows builds use the same package and require no MinGW zlib installation.
+The native workflow compiles the test and ABI graph and runs the suite. The
+compile commands are:
 
 ```powershell
 zig build test-compile -Dtarget=x86_64-windows-gnu `
@@ -321,12 +321,14 @@ toolchain cohorts.
 
 - Supported: Linux and macOS on `x86_64` and `aarch64`; these targets are built
   and tested by CI.
-- Not officially supported: `x86_64-windows-gnu`. The pinned libxev IOCP accept
-  path is blocked upstream and the runtime is therefore not claimed. The
-  reusable Windows workflow compiles the test and C ABI graph and the
-  ReleaseFast libraries on a native runner; no Windows binaries are published.
-  Windows QUIC uses IOCP UDP receives and Winsock `WSASendTo` sends but is not
-  runtime-verified.
+- Native Windows coverage: `x86_64-windows-gnu` has a reusable workflow that
+  compiles the test and C ABI graph, builds the ReleaseFast libraries, and runs
+  `zig build test` on `windows-2025`. The 1.9.0 accept and queued-close fixes
+  are recorded in
+  [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md). Official support
+  follows a green runtime job for the release commit; no Windows binaries are
+  published. Windows QUIC uses IOCP UDP receives and Winsock `WSASendTo`
+  sends.
 - Community: FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD share the build graph
   without dedicated CI.
 

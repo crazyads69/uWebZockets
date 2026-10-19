@@ -1,4 +1,4 @@
-# µWebZockets 1.8.9 Examples
+# µWebZockets 1.9.0 Examples
 
 Build the supported examples with Zig 0.16.0:
 
@@ -175,7 +175,7 @@ curl -i http://127.0.0.1:3000/
 ```
 
 The server prints the `µWEBZOCKETS` wordmark and a Vite-style ready summary
-(`µWebZockets v1.8.9  ready in 0.6 ms`, then the `→ Local:` line, with the
+(`µWebZockets v1.9.0  ready in 0.6 ms`, then the `→ Local:` line, with the
 elapsed time scaled from nanoseconds up) before the first accepting listener;
 a one-line `µWebZockets` mark fits narrow terminals. Each request then logs
 Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan

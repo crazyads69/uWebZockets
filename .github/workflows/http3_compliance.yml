@@ -49,15 +49,38 @@ jobs:
             ${{ runner.os }}-http3-v3-
 
       - name: Build HTTP/3 server in Nix
-        run: nix develop "path:." -c zig build -Doptimize=ReleaseSafe
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if nix develop "path:." -c zig build -Doptimize=ReleaseSafe; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              break
+            fi
+            printf 'Nix input fetch or build failed (attempt %s); retrying in 15s\n' "$attempt" >&2
+            sleep 15
+          done
+          exit 1
 
       - name: Run cross-implementation gate
+        shell: bash
         env:
           HTTP3_ARTIFACT_DIR: ${{ runner.temp }}/http3-compliance
         run: |
-          nix develop "path:." -c \
-            nix develop "path:./scripts/http3_compliance" -c \
-              bash scripts/http3_compliance/run.sh
+          for attempt in 1 2 3; do
+            if nix develop "path:." -c \
+              nix develop "path:./scripts/http3_compliance" -c \
+                bash scripts/http3_compliance/run.sh; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              break
+            fi
+            printf 'Nix input fetch or gate failed (attempt %s); retrying in 15s\n' "$attempt" >&2
+            sleep 15
+          done
+          exit 1
 
       - name: Upload HTTP/3 evidence
         if: ${{ always() }}

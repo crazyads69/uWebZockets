@@ -101,6 +101,29 @@ pub fn prefer(be: Backend) bool {
     return be == api.backend;
 }
 
+/// Submits completions that the backend queued but has not started yet.
+///
+/// IOCP defers queued operations until the next tick. A connection closed from
+/// the callback that queued its read or write must submit before canceling, or
+/// the cancel only marks the target dead and its callback never fires. Other
+/// backends either start operations during `add` or expose no submit step.
+pub fn submit(loop: *Loop) !void {
+    if (comptime api.dynamic) {
+        switch (api.backend) {
+            inline else => |tag| {
+                const BackendApi = (comptime api.superset(tag)).Api();
+                if (comptime @hasDecl(BackendApi.Loop, "submit")) {
+                    const inner: *BackendApi.Loop = &@field(loop.backend, @tagName(tag));
+                    try inner.submit();
+                }
+            },
+        }
+        return;
+    }
+
+    if (comptime @hasDecl(Loop, "submit")) try loop.submit();
+}
+
 /// Cancels `completion` and reports the outcome through `callback`.
 ///
 /// kqueue drops armed kevents when the descriptor closes, so cancellation is

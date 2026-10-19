@@ -17,6 +17,32 @@ is a defect, a scoped decision, or pending work.
 | Stale supported-version policy | [SECURITY.md](../SECURITY.md) tracks the latest released minor line |
 | Monolithic protocol documentation | Split into [http.md](http.md), [http2.md](http2.md), [quic.md](quic.md), [websocket.md](websocket.md), and [json_rpc.md](json_rpc.md) |
 
+## Closed in 1.9.0
+
+The 1.9.0 milestone closes or re-declares every limit from the 1.8.5/1.8.9
+declared-limits handoff. The full measurement record is in
+[`benchmarks/results/h2_tls_scaling_v1/2026_10_19/`](../benchmarks/results/h2_tls_scaling_v1/2026_10_19/README.md).
+
+| Limit | Resolution |
+| --- | --- |
+| L1a No 256/1,024-connection H2-over-TLS run | Closed with the full 64-2,048 sweep on the repository host. The 4-worker TLS cluster completed 30/30 samples with zero failures; 1,024 connections reached 276,534.80 req/s at one stream and 669,300.80 at eight. Artifacts and host caveats are linked above |
+| L4 MemorySanitizer scope | Closed as Option A: the dependency-boundary smoke is the permanent contract, dated 2026-10-19 ([CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md#memorysanitizer-contract-permanent-2026-10-19)) |
+| L5 `Cluster.request_shutdown` after `deinit` | Closed docs-only with an explicit internal guard, a call-site doc comment, and a regression test; no public getter was added ([ADR 0003](adr/0003-tls-cluster-operational-boundaries.md)) |
+| L6 TLS credential rotation | Closed as a dated decision: rolling restart remains the supported path; no hot reload ([ADR 0003](adr/0003-tls-cluster-operational-boundaries.md)) |
+| L7 Backend stickiness and internal `xev` | Closed as a dated decision: selection is process-sticky, `xev` stays internal, and backend introspection needs an ADR ([architecture.md](architecture.md#event-loop-and-completions)) |
+| L8 Shared-port TLS test flake | Closed after repeated focused and full-suite runs stayed green; the eight-reservation scheme remains |
+| L9 Cross-worker session resumption | Closed as measured and accepted for the target workload: 1 worker reused 100/120 handshakes, 4 workers reused 23/120, which is the expected per-worker ticket behavior ([ADR 0003](adr/0003-tls-cluster-operational-boundaries.md)) |
+| L10 HTTP/2 window tuning | Closed as measured, not needed: the sweep showed worker-count scaling and no timeout, failure, or write-queue stall; no window constants changed |
+| L12 Post-merge provenance | v1.8.9 tag `v1.8.9` exists at `2573661d12e573d00ed0036736a68d34955c1339`, `main` is green, and a clean-clone test with an empty cache is archived. The v1.9.0 tag remains maintainer-owned after merge |
+
+## Re-declared in 1.9.0
+
+| Limit | Dated reason and restoration criterion |
+| --- | --- |
+| L1b HttpArena `baseline-h2` | The adapter and official `/benchmark` run live in `MDA2AV/HttpArena`, which this repository cannot modify or trigger. Restore only after an adapter PR uses the public cluster API, a released tag works from a clean dependency cache, and the official run saves fresh nonzero 256/1,024-connection results |
+| L3b / L13 Windows runtime | The auditable libxev accept overlay and the queued-completion submit-before-cancel fix landed, and `windows.yml` now has a native `zig build test --summary all` job. Windows becomes officially supported when that job is green for the release commit; until then the compile gate remains the claim ([ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md)) |
+| L11 H2/TLS benchmark in GitHub Actions | Deliberate exclusion: shared runners cannot satisfy the quiet-host evidence contract. The contract stays out of `benchmark.yml`. A future dedicated quiet runner may add a non-gating `workflow_dispatch` job that uploads raw artifacts and never compares its numbers to shared runners |
+
 ## Deliberate boundaries
 
 These are decisions, not omissions. Each has a reason and, where relevant, the
@@ -33,9 +59,9 @@ condition that would change it.
 | WebTransport is not live | The pinned lsquic build exposes raw datagrams but not extended CONNECT, server-initiated unidirectional streams, or reset-at; see [ADR 0001](adr/0001-http3-datagram-and-webtransport.md) |
 | HTTP/3 does not advance the metrics registry | The engine has no registry handle without new plumbing through the transport; records are emitted instead |
 | kTLS is a standalone helper, not an integrated offload | The pinned BoringSSL has no kernel-TLS support, so the connection path cannot hand keys to the kernel. `uz.ktls` remains available to applications that manage their own records |
-| MemorySanitizer does not instrument Zig code | Zig 0.16 emits no MSan instrumentation. The MSan gate covers the pinned C/C++ dependency boundary |
+| MemorySanitizer does not instrument Zig code | Permanent decision dated 2026-10-19: Zig 0.16 emits no MSan instrumentation, so the MSan gate covers the pinned C/C++ dependency boundary ([CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md#memorysanitizer-contract-permanent-2026-10-19)) |
 | BSD targets have no runtime CI | No hosted GitHub runners exist for the BSDs; the shared build graph is compiled but not executed in CI |
-| Windows is not officially supported | Two defects block the first Windows accept loop, so only compilation is claimed; see [Windows runtime blocker details](#windows-runtime-blocker-details). The reusable workflow stays compile-only and no Windows binaries are published |
+| Windows runtime is gated on native CI | The accept overlay and queued-close fixes landed in 1.9.0 and the workflow now runs the test suite, but official support starts only when that job is green for the release commit; see [Windows runtime blocker details](#windows-runtime-blocker-details) and [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md). No Windows binaries are published |
 | macOS workers are unpinned | The platform exposes no hard-affinity API |
 | The client is HTTP/1.1 only | It is deliberately small: no DNS resolution (numeric addresses only), no redirects, no cookies, no proxy support, no connection pooling, no mTLS, and no HTTP/2 or HTTP/3 client |
 | The C ABI is a high-level subset | Opaque handles and fixed capacities target C/C++ consumers; the low-level HTTP/2, HPACK, HTTP/3-extension, WebTransport, UDP, and client modules are Zig-only |
@@ -69,11 +95,17 @@ defects, in order of encounter.
    completions (submit them before canceling, or track submission explicitly)
    and clear the flags for completions whose callback will never fire.
 
-The temporary probe branch was discarded; no dependency fork or vendored
-libxev change is carried in this release. Revisiting Windows runtime support
-starts from these two findings. The TLS cluster test plumbing already binds
-`getsockname` and `SO_RCVTIMEO` through ws2_32, so the only remaining Windows
-runtime work is the accept lifecycle and queued-completion fixes above.
+The 1.9.0 work carries the upstream accept fix as an auditable overlay rather
+than a fork or a package-cache edit, and it submits queued IOCP completions
+before canceling them so the target callback clears `read_active`/`is_writing`.
+`windows.yml` now runs the full test suite on `windows-2025` in addition to the
+compile gates, and a regression test closes a queued write before submission
+and asserts that the pool slot returns. The decision, patch, and rollback path
+are recorded in [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md).
+The TLS cluster test plumbing already binds `getsockname` and `SO_RCVTIMEO`
+through ws2_32, so those tests execute rather than skip. Windows remains
+compile-only in the support claim until the native job is green for the release
+commit.
 
 ## Near-term direction
 

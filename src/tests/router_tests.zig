@@ -376,6 +376,66 @@ test "router: callback shutdown is drained by the active outer run" {
     try std.testing.expect(!server.is_running());
 }
 
+const QueuedCloseContext = struct {
+    payload: []const u8,
+};
+
+fn queued_close_handler(context: ?*anyopaque, _: *Request, response: *Response) void {
+    const self: *QueuedCloseContext = @ptrCast(@alignCast(context.?));
+    const conn = switch (response.target) {
+        .tcp => |connection| connection,
+        else => return,
+    };
+    const length = @min(self.payload.len, conn.write_queue.len);
+    @memcpy(conn.write_queue[0..length], self.payload[0..length]);
+    conn.write_head = 0;
+    conn.write_len = length;
+
+    // Queue a write and close before returning to the loop. IOCP has not
+    // submitted the completion yet, which is the Windows shutdown defect.
+    conn.start_write();
+    support.tcp.close_connection(conn);
+}
+
+test "router: queued write closed before submission releases the slot" {
+    const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 0);
+    var server = try TestApp.init(std.testing.io);
+    defer server.deinit();
+
+    var context = QueuedCloseContext{ .payload = "queued before close" };
+    _ = try server.route_context(.get, "/queued-close", &context, queued_close_handler);
+    try server.listen("127.0.0.1", 0);
+    const port = try support.tcp.listener_port(&server.server.?);
+
+    const Runner = struct {
+        application: *TestApp,
+        error_code: ?anyerror = null,
+
+        fn run(self: *@This()) void {
+            self.application.run() catch |err| {
+                self.error_code = err;
+            };
+        }
+    };
+
+    var runner = Runner{ .application = &server };
+    const thread = try std.Thread.spawn(.{}, Runner.run, .{&runner});
+
+    var storage = support.client.FetchStorage{};
+    _ = support.client.fetch_blocking(
+        std.testing.io,
+        .{ .method = .get, .host = "127.0.0.1", .path = "/queued-close" },
+        .{ .port = port, .read_timeout_ms = 2_000 },
+        &storage,
+    ) catch {};
+
+    server.request_shutdown();
+    thread.join();
+
+    try std.testing.expect(runner.error_code == null);
+    try std.testing.expectEqual(@as(usize, 0), server.pool.count_active());
+}
+
 test "router: request_shutdown wakes a foreign-thread run" {
     const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 0);
     var server = try TestApp.init(std.testing.io);

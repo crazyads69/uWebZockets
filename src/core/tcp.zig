@@ -1629,6 +1629,16 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.release_file_body();
     conn.deinit_tls();
 
+    if (builtin.os.tag == .windows and (conn.read_active or conn.is_writing)) {
+        // IOCP queues operations until the next tick. If this close runs in the
+        // callback that queued the read or write, CancelIoEx cannot see the
+        // target yet and only the cancel callback would fire. Submit first so
+        // the target becomes active and its own callback clears the flags.
+        xev.submit(conn.loop) catch |err| {
+            log.warn("queued completion submit failed before close: {}", .{err});
+        };
+    }
+
     // kqueue discards armed kevents when the descriptor closes, and a read or
     // write completion canceled before submission can have its callback
     // dropped by that backend. Skipping the cancels there is safe: callbacks

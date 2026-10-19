@@ -3,6 +3,119 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.9.0] - 2026-10-20
+
+This release closes or re-declares every limit from the v1.8.5/v1.8.9
+declared-limits handoff. The HTTP/2-over-TLS contract now has a full
+64-2,048-connection characterization with raw artifacts; the Windows IOCP
+accept and queued-close blockers have auditable fixes and a native runtime job;
+and the remaining TLS, sanitizer, and backend boundaries are dated decisions
+with restoration criteria. No exported Zig or C API signature changes.
+
+### Added
+
+- `h2-tls-scaling-v1` evidence from the repository host: a 4-worker TLS
+  cluster completed 30 of 30 samples with zero failed, errored, timed-out, or
+  non-2xx requests at 64 through 2,048 connections, reaching a median
+  276,534.80 requests/s at 1,024 connections with one stream and 669,300.80 with
+  eight. The plaintext control, single-application TLS control, 1/2/4-worker
+  comparison, CPU/RSS samples, per-worker accepts, host metadata, and the
+  filled hypothesis table are under
+  `benchmarks/results/h2_tls_scaling_v1/2026_10_19/`.
+- `UWZ_MODE` controls in `examples/tls_cluster.zig`: `tls-cluster`,
+  `plaintext-cluster`, and `tls-single`. Cluster modes publish one
+  `worker_accepts` line per worker after shutdown, and the single mode always
+  requires PEM files.
+- Benchmark runner evidence capture: optional URL argument, real-credential
+  preflight, capacity and open-file checks, CPU/RSS sampling, backend detection,
+  per-worker accepts, parsed request percentiles, failure snapshots, and
+  snake_case artifact names. The readiness probe now requires one successful
+  request because h2load exits zero even when every connection fails.
+- `scripts/probe_tls_resumption.sh`, an explicit-ticket TLS 1.3 resumption
+  probe. It measured 20 new/100 reused handshakes on one worker and 97 new/23
+  reused on four workers, confirming that per-worker ticket keys bound reuse to
+  the issuing worker.
+- Native `windows-2025` runtime job in `windows.yml` beside the compile and
+  static-library gates.
+- [ADR 0003](docs/adr/0003-tls-cluster-operational-boundaries.md): no credential
+  hot reload in 1.9.0, rolling restart remains supported, and cross-worker
+  session resumption is a measured, accepted boundary.
+- [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md): auditable
+  libxev IOCP accept overlay and submit-before-cancel close policy.
+- Regression tests for queued-write close releasing its pool slot, HTTP/2
+  stream-capacity refusal without GOAWAY, connection credit stacking above
+  per-stream allowances, per-stream credit isolation, and
+  `Cluster.request_shutdown` after `deinit`.
+- Clean-clone provenance for `v1.8.9`: tag, commit
+  `2573661d12e573d00ed0036736a68d34955c1339`, Zig 0.16.0, contract
+  `h2-tls-scaling-v1`, and a green `zig build test --summary all` from an empty
+  Zig cache, archived with the measurement artifacts.
+
+### Changed
+
+- `Cluster.request_shutdown` now returns immediately after `deinit` and
+  documents the no-op on the method itself. The behavior stays docs-only; no
+  public lifecycle getter was added.
+- Windows close now submits queued IOCP completions before canceling them, so a
+  completion canceled in the callback that queued it still delivers its target
+  callback and clears `read_active`/`is_writing`.
+- The pinned libxev sources are copied into the build graph and one
+  pre-generated IOCP file is overlaid. `scripts/check_vendor_overlay.sh`
+  verifies both the libxev and lsquic overlays against their pinned sources and
+  audit patches; the Zig package cache is never modified.
+- `benchmarks/h2_tls_scaling_v1.env` quotes the connection and stream lists so
+  a POSIX shell can source it. The measurement parameters are unchanged.
+- The MemorySanitizer contract is permanently documented as a
+  dependency-boundary smoke dated 2026-10-19, because Zig 0.16 emits no MSan
+  instrumentation and a second instrumented BoringSSL toolchain is out of
+  scope.
+- Documentation now records the measured H2/TLS status, the Windows runtime
+  job, the permanent MSan contract, the backend-stickiness decision, and the
+  dated rotation/resumption boundaries.
+
+### Fixed
+
+- Windows IOCP accept: `internal_accept_socket` is cleared after `AcceptEx`
+  transfers the socket and on both error paths, so a persistent accept loop no
+  longer calls `AcceptEx` on an already-connected socket and panics on
+  `WSAEINVAL`.
+- Windows close: a read or write canceled before submission no longer strands
+  the connection slot and turns shutdown into `ShutdownIncomplete`.
+- The H2/TLS runner no longer treats a failed h2load readiness request as
+  success, no longer aborts on its own summary format, and no longer writes
+  filenames that violate the repository convention.
+
+### Security
+
+- No authentication, TLS policy, or request-path surface changed. The Windows
+  overlay is limited to clearing a socket handle; the transport change only
+  reorders submission before cancellation.
+- Recorded TLS measurements used a local CA-signed PEM leaf, not
+  `enable_https_ephemeral`; the private key lived only under `/dev/shm` and was
+  never committed.
+- Credential rotation still requires a rolling restart. This is now a dated
+  decision with an explicit restoration criterion rather than an open omission.
+
+### Limits
+
+- HttpArena `baseline-h2` remains withdrawn. Restoring it requires an adapter PR
+  in `MDA2AV/HttpArena` that uses only the public cluster API, a released tag
+  from a clean dependency cache, and an official
+  `/benchmark -f uwebzockets --save` run with fresh nonzero 256/1,024 rows.
+- The H2/TLS numbers are local characterization on a shared host with the
+  `powersave` governor, not a quiet-host or HttpArena claim. The historical
+  zero-requests single-app failure did not reproduce; the control served
+  82,136.60 requests/s at 1,024 connections with one stream.
+- Windows is not promoted in the support claim until the native runtime job is
+  green for the release commit. No Windows binaries are published.
+- `h2-tls-scaling-v1` stays out of `benchmark.yml` while runners are shared. A
+  dedicated quiet runner may add a non-gating `workflow_dispatch` job that
+  uploads raw artifacts and never compares with shared-runner numbers.
+- The v1.9.0 tag is maintainer-owned after review and merge. Agents did not
+  create, move, or push any tag.
+- mTLS and QUIC/HTTP/3 clustering remain documented boundaries; no new promise
+  is made for them in this release.
+
 ## [1.8.9] - 2026-10-19
 
 This release resolves the v1.8.5 declared-limits handoff. The io_uring retry

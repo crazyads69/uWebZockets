@@ -1581,7 +1581,13 @@ pub fn configured_app_with_route_params(
                 }
 
                 /// Requests event-loop-confined shutdown for every worker.
+                ///
+                /// After `deinit` this is a documented no-op: the worker
+                /// slices are released, so there is no loop left to wake and
+                /// no resource to drain. The guard makes the behavior explicit
+                /// at the call site instead of relying on an empty slice.
                 pub fn request_shutdown(self: *Cluster) void {
+                    if (self.deinitialized) return;
                     for (self.workers) |*app_worker| app_worker.request_shutdown();
                 }
 

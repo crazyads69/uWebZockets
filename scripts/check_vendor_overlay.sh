@@ -57,4 +57,29 @@ for version in $versions; do
         "$generated_file does not cover $version; regenerate it with src/liblsquic/gen-verstrs.pl"
 done
 
-printf '%s\n' "vendor overlay matches the pinned lsquic revision"
+xev_patch_file=$(pwd)/patches/libxev_iocp_accept_socket.patch
+xev_overlay_file=vendor/libxev_overlay/src/backend/iocp.zig
+
+[ -f "$xev_patch_file" ] || fail "missing $xev_patch_file"
+[ -f "$xev_overlay_file" ] || fail "missing $xev_overlay_file"
+
+xev_url=$(sed -n \
+    's|^[[:space:]]*\.url = "\(git+https://github.com/mitchellh/libxev#[0-9a-f]*\)",$|\1|p' \
+    build.zig.zon)
+[ -n "$xev_url" ] || fail "unable to read the pinned libxev URL from build.zig.zon"
+
+xev_hash=$(zig fetch --global-cache-dir "$tmp_dir/cache" "$xev_url" 2>/dev/null | tail -n 1) ||
+    fail "unable to fetch the pinned libxev package"
+xev_archive=$tmp_dir/cache/p/$xev_hash.tar.gz
+[ -f "$xev_archive" ] || fail "fetch did not produce the pinned libxev archive"
+mkdir -p "$tmp_dir/xev" "$tmp_dir/xev-patched/src/backend"
+tar -xzf "$xev_archive" -C "$tmp_dir/xev" --strip-components=1
+cp "$tmp_dir/xev/src/backend/iocp.zig" "$tmp_dir/xev-patched/src/backend/iocp.zig"
+(
+    cd "$tmp_dir/xev-patched"
+    git apply -p1 "$xev_patch_file"
+)
+cmp -s "$tmp_dir/xev-patched/src/backend/iocp.zig" "$xev_overlay_file" || fail \
+    "$xev_overlay_file is stale; regenerate it from the audit patch"
+
+printf '%s\n' "vendor overlays match the pinned lsquic and libxev revisions"

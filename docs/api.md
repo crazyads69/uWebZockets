@@ -154,8 +154,10 @@ once, and `run` joins every worker. `Cluster.publish` broadcasts through
 bounded per-worker rings, and `Cluster.request_shutdown` drains all workers.
 Because it returns `void`, `request_shutdown` after `deinit` is a documented
 non-erroring no-op: the worker slice has already been released, so rebuild the
-cluster instead of relying on shutdown to report a lifecycle error.
-See [architecture.md](architecture.md).
+cluster instead of relying on shutdown to report a lifecycle error. The guard
+is explicit in `Cluster.request_shutdown` as of 1.9.0; a public lifecycle
+getter would require an ADR. See [architecture.md](architecture.md) and
+[ADR 0003](adr/0003-tls-cluster-operational-boundaries.md).
 
 ### TLS-enabled clusters
 

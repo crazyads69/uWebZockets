@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.8.9 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.9.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -341,8 +341,10 @@ the selected route enforces resource-specific media-type and content rules.
 
 Windows QUIC datagrams are received through libxev IOCP UDP completions and
 sent with the Winsock `WSASendTo` adapter. The native Windows workflow compiles
-this path, but Windows is not officially supported: the pinned libxev IOCP
-accept lifecycle blocks the runtime, so only compilation is claimed.
+this path and runs the test suite. The 1.9.0 accept overlay and queued-close
+fix are recorded in
+[ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md); official
+support follows a green runtime job for the release commit.
 
 ## Development log
 

@@ -127,6 +127,16 @@ test "affinity: physical cores are discoverable and pinning is best effort" {
     }
 }
 
+test "cluster: request_shutdown after deinit is a documented no-op" {
+    const TestApp = support.app.configured_app_with_timeout(1, 1024, 4096, 0);
+    var group = try TestApp.cluster(1).init(std.testing.allocator, std.testing.io);
+    group.deinit();
+
+    // Deinit releases the worker slice. A late supervisor or signal callback
+    // must not walk released storage or panic.
+    group.request_shutdown();
+}
+
 test "cluster: workers own disjoint slabs and configure independently" {
     const TestApp = support.app.configured_app_with_timeout(2, 1024, 4096, 0);
     const test_config = support.config.ServerConfig{

@@ -1077,6 +1077,142 @@ test "http2 server: connection and stream response credit are independent" {
     try std.testing.expect(session.connection.streams.find(1) == null);
 }
 
+test "http2 server: stream capacity refuses the next stream without GOAWAY" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = RefusalState{};
+
+    const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
+    var input: [160]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    for ([_]u32{ 1, 3, 5, 7 }) |stream_id| {
+        try append_frame(&input, &input_length, .headers, 0x5, stream_id, &request_headers);
+    }
+    try session.receive(input[0..input_length], state.callbacks());
+    try std.testing.expectEqual(@as(usize, 4), session.connection.streams.active_count);
+
+    input_length = 0;
+    try append_frame(&input, &input_length, .headers, 0x5, 9, &request_headers);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    // Capacity exhaustion is stream-scoped: the fifth stream is refused while
+    // the connection and its four live streams remain usable.
+    try std.testing.expect(!session.is_closed());
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try reset_count(state.output[0..state.output_length], 9, .refused_stream),
+    );
+    try std.testing.expectEqual(
+        @as(?u32, null),
+        try goaway_code(state.output[0..state.output_length]),
+    );
+}
+
+test "http2 server: connection credit stacks above per-stream allowances" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+
+    const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
+    var input: [96]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try append_frame(&input, &input_length, .headers, 0x5, 3, &request_headers);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    const first = session.connection.streams.find(1) orelse return error.MissingStream;
+    const second = session.connection.streams.find(3) orelse return error.MissingStream;
+    session.connection.connection_send_window = 0;
+    try session.send_response(1, "200 OK", "", "abc", state.callbacks());
+    try session.send_response(3, "200 OK", "", "def", state.callbacks());
+    try std.testing.expect(session.pending_response_active[first]);
+    try std.testing.expect(session.pending_response_active[second]);
+
+    var update: [32]u8 = undefined;
+    var update_length: usize = 0;
+    try append_frame(&update, &update_length, .window_update, 0, 0, &.{ 0, 0, 0, 3 });
+    try session.receive(update[0..update_length], state.callbacks());
+
+    var first_bytes: [16]u8 = undefined;
+    var second_bytes: [16]u8 = undefined;
+    const first_frames = try collect_data_frames(
+        state.output[0..state.output_length],
+        1,
+        &first_bytes,
+    );
+    const second_frames = try collect_data_frames(
+        state.output[0..state.output_length],
+        3,
+        &second_bytes,
+    );
+    try std.testing.expectEqual(@as(usize, 3), first_frames.bytes_length);
+    try std.testing.expectEqual(@as(usize, 0), second_frames.bytes_length);
+
+    update_length = 0;
+    try append_frame(&update, &update_length, .window_update, 0, 0, &.{ 0, 0, 0, 3 });
+    try session.receive(update[0..update_length], state.callbacks());
+    const second_resumed = try collect_data_frames(
+        state.output[0..state.output_length],
+        3,
+        &second_bytes,
+    );
+    try std.testing.expectEqual(@as(usize, 3), second_resumed.bytes_length);
+}
+
+test "http2 server: per-stream credit does not consume another stream's allowance" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+
+    const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
+    var input: [96]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try append_frame(&input, &input_length, .headers, 0x5, 3, &request_headers);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    const first = session.connection.streams.find(1) orelse return error.MissingStream;
+    session.connection.streams.send_windows[first] = 0;
+    try session.send_response(1, "200 OK", "", "abc", state.callbacks());
+    try session.send_response(3, "200 OK", "", "def", state.callbacks());
+    try std.testing.expect(session.pending_response_active[first]);
+
+    var first_bytes: [16]u8 = undefined;
+    var second_bytes: [16]u8 = undefined;
+    const blocked = try collect_data_frames(
+        state.output[0..state.output_length],
+        1,
+        &first_bytes,
+    );
+    const open = try collect_data_frames(
+        state.output[0..state.output_length],
+        3,
+        &second_bytes,
+    );
+    try std.testing.expectEqual(@as(usize, 0), blocked.bytes_length);
+    try std.testing.expectEqual(@as(usize, 3), open.bytes_length);
+
+    var update: [32]u8 = undefined;
+    var update_length: usize = 0;
+    try append_frame(&update, &update_length, .window_update, 0, 1, &.{ 0, 0, 0, 3 });
+    try session.receive(update[0..update_length], state.callbacks());
+    const resumed = try collect_data_frames(
+        state.output[0..state.output_length],
+        1,
+        &first_bytes,
+    );
+    try std.testing.expectEqual(@as(usize, 3), resumed.bytes_length);
+}
+
 test "http2 server: blocked and failed DATA writes retain offsets and credit" {
     var fixture: SessionFixture = .{};
     try fixture.init();

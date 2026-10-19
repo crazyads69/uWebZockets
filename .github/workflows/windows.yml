@@ -1,4 +1,4 @@
-name: Windows Compile Check
+name: Windows Build and Runtime Check
 
 on:
   workflow_dispatch:
@@ -44,3 +44,24 @@ jobs:
         run: |
           zig build lib -Dtarget=x86_64-windows-gnu `
             -Doptimize=ReleaseFast --summary all
+
+  runtime_tests:
+    name: x86_64-windows-gnu runtime
+    runs-on: windows-2025
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
+
+      - name: Run Windows test suite
+        shell: pwsh
+        run: zig build test --summary all

@@ -159,8 +159,11 @@ any listener exists; every accepted connection creates its own `SSL` from its
 worker's context. No credential, session-cache, handshake, or ticket state is
 shared between loops, and no lock or allocation is added to the request path.
 The certificate and key files are read once per worker at startup, so rotating
-credentials requires a rolling restart. `Cluster.deinit` releases each context
-with its worker.
+credentials requires a rolling restart. Per-worker ticket keys also mean a
+reconnect that lands on another worker cannot resume; that boundary is measured
+and accepted for the target HTTP workload. Both decisions are recorded in
+[ADR 0003](adr/0003-tls-cluster-operational-boundaries.md), and
+`Cluster.deinit` releases each context with its worker.
 
 The context keeps the single-application HTTPS policy: TLS 1.3 only, ALPN `h2`
 then `http/1.1`, and safe-method 0-RTT with non-safe early data answered `425

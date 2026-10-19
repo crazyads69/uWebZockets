@@ -11,7 +11,7 @@ it is not a proof that all memory or security defects are absent.
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
 | `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Parallel Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
-| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` ReleaseSafe test compilation and static-library build; runtime execution stays blocked |
+| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` ReleaseSafe compilation, static-library build, and runtime test suite |
 | `oss_fuzz.yml` | pushes and pull requests to `main`, manual, reusable | `Testing` | OSS-Fuzz-compatible ASan/libFuzzer build and execution |
 | `autobahn_compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
 | `h1spec_compliance.yml` | pushes and pull requests to `main`, manual | `h1spec Compliance` | HTTP/1.1 compliance |
@@ -101,6 +101,22 @@ ASan's thread teardown munmaps whichever alternate signal stack it finds and
 Zig's thread-local stack is not page aligned; leak detection and halt-on-error
 stay enabled.
 
+### MemorySanitizer contract (permanent, 2026-10-19)
+
+The dependency-boundary smoke is the permanent MemorySanitizer contract, not an
+interim placeholder. Zig 0.16 emits no MSan instrumentation for Zig code, and
+instrumenting BoringSSL would require building and maintaining a second TLS
+toolchain whose runtime and allocator behavior differ from the shipped one.
+The current gate therefore rebuilds the pinned C/C++ dependencies and the local
+C shim with MSan and origin tracking, then runs the focused boundary smoke. It
+does not claim full-suite MSan coverage of the TLS or cluster paths.
+
+Changing this contract requires a new milestone and an ADR that supplies a
+toolchain emitting Zig MSan instrumentation, a supported instrumented BoringSSL
+build, and a full-suite run. The decision is repeated in
+[docs/deployment.md](docs/deployment.md#6-platforms) and linked from
+[docs/roadmap.md](docs/roadmap.md).
+
 The fuzz job runs Zig's native fuzzer for 100,000 iterations over bounded
 HTTP, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.
 Seed corpora include valid, fragmented, malformed, and control-frame inputs.
@@ -174,25 +190,24 @@ built or uploaded, and consumers use `zig fetch` so their own toolchain builds
 the pinned dependencies.
 
 The reusable Windows workflow runs separately on `windows-2025`. It installs
-the exact Zig release and compiles the ReleaseSafe test and C ABI graph plus the
-ReleaseFast static libraries. Windows is not officially supported.
+the exact Zig release, compiles the ReleaseSafe test and C ABI graph plus the
+ReleaseFast static libraries, and runs `zig build test --summary all` in a
+second native job. Windows remains compile-checked in the support claim until
+that runtime job is green for the release commit; no Windows binaries are
+published.
 
-Runtime execution on Windows is currently blocked by two defects, both
-documented with evidence in [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details).
-First, the pinned libxev IOCP backend never clears its internal accept socket
-after a completed accept, so the re-armed accept calls `AcceptEx` on an
-already-connected socket and gets `WSAEINVAL (10022)`, after which libxev
-panics mapping the unmapped error code. Second, once that is patched, the
-Windows close path treats queued completions as active, so a canceled-before-
-submission write never delivers its callback and the connection slot never
-returns to the pool. Every server listener on Windows goes through that accept
-path, so a native runtime gate cannot pass until both are fixed. The workflow
-therefore remains compile-only, and no Windows binaries are published. The
-cluster TLS test plumbing no longer returns `error.WorkerPortUnsupported` on
-Windows: the tests read the bound port through `ws2_32.getsockname` and bound
-one client read with `SO_RCVTIMEO` through the same winsock binding used by the
-listener, so the compile gate covers that path and a runtime job only needs the
-two blockers removed.
+The 1.9.0 work removes both runtime blockers. The pinned libxev IOCP backend is
+built with an auditable overlay that clears `internal_accept_socket` on the
+success and error paths, so a re-armed accept allocates a fresh socket instead
+of calling `AcceptEx` on a connected one. The transport submits queued IOCP
+completions before canceling them, so a connection closed in the callback that
+queued its read or write reaches `CancelIoEx` and its target callback clears
+`read_active`/`is_writing`. The decision and rollback path are in
+[ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md); the blocker
+history is in
+[docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details). The cluster
+TLS tests read the bound port through `ws2_32.getsockname` and bound one client
+read with `SO_RCVTIMEO`, so they execute on the native job rather than skip.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,
@@ -232,9 +247,17 @@ must only be compared within matching runner and toolchain cohorts.
 The separate [`h2-tls-scaling-v1`](benchmarks/h2_tls_scaling_guarantee.md)
 contract characterizes HTTP/2-over-TLS at 64 through 2,048 connections against
 the single-application, plaintext-cluster, and TLS-cluster controls. It ships
-with `scripts/benchmark_h2_tls.sh` and is intentionally not wired into
-`benchmark.yml`: the 1,024-connection rows need a quiet dedicated host, and
-`http-throughput-v1` remains the only CI-enforced guarantee.
+with `scripts/benchmark_h2_tls.sh`. The 1.9.0 characterization ran the full
+sweep on the repository host and stored raw artifacts, host metadata, and the
+filled hypothesis table under
+[`benchmarks/results/h2_tls_scaling_v1/2026_10_19/`](benchmarks/results/h2_tls_scaling_v1/2026_10_19/README.md).
+
+The contract remains intentionally out of `benchmark.yml`: shared runners
+cannot satisfy the quiet-host evidence contract, and mixing their numbers with
+the dedicated-host series would be invalid. When a dedicated quiet runner
+exists, add a `workflow_dispatch`-only, non-gating job that uploads raw
+artifacts and records provenance; never compare its numbers to shared runners.
+`http-throughput-v1` remains the only CI-enforced performance guarantee.
 
 ## Publishing
 

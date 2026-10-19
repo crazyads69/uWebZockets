@@ -98,10 +98,12 @@ Listeners and accepted sockets are tuned per platform:
 
 ### Windows fallback
 
-Windows is not officially supported. The pinned libxev IOCP accept lifecycle
-blocks the first accept loop (see [roadmap.md](roadmap.md#windows-runtime-blocker-details)),
-so the paths below are kept compiling and reviewed for portability, not claimed
-at runtime. Windows IOCP already multiplexes completions across threads and has
+Windows now runs the test suite on a native runner. The 1.9.0 accept overlay
+and queued-close fix remove the blockers recorded in
+[roadmap.md](roadmap.md#windows-runtime-blocker-details) and
+[ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md); official support
+follows a green runtime job for the release commit. Windows IOCP already
+multiplexes completions across threads and has
 no `SO_REUSEPORT`. In cluster mode every worker binds the shared address with
 `SO_REUSEADDR` instead. Each accepted connection still lands wholly inside the
 accepting worker's slab, so routing stays safe; kernel distribution across
@@ -156,6 +158,9 @@ backend selection is process-global: the first loop selects it exactly once and
 later loops reuse that selection, and an attempted backend change fails with
 `error.BackendChanged` instead of mixing epoll and io_uring loops. The
 io_uring-to-epoll fallback therefore remains available only on the first loop.
+This stickiness is a deliberate 2026-10-19 decision, and `xev` stays internal:
+the package exports no backend type, selector, or loop handle. Adding backend
+introspection to the public API requires an ADR first.
 An established io_uring loop retries loop creation at most 32 times with a
 1 ms delay between attempts while the kernel uncharges a closed ring
 (`error.SystemResources`); any other error, backend, or exhausted attempt

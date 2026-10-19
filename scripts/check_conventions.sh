@@ -72,4 +72,8 @@ if rg -n --pcre2 '[\x{1F1E6}-\x{1FAFF}\x{2600}-\x{27BF}]' . -g '*.{c,h,json,md,n
     failed=1
 fi
 
+if ! sh scripts/check_benchmark_results.sh; then
+    failed=1
+fi
+
 exit "$failed"
