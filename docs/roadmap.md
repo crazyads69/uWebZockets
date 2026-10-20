@@ -43,6 +43,44 @@ declared-limits handoff. The full measurement record is in
 | L3b / L13 Windows runtime | The auditable libxev accept overlay and the queued-completion submit-before-cancel fix landed, and `windows.yml` now has a native `zig build test --summary all` job. Windows becomes officially supported when that job is green for the release commit; until then the compile gate remains the claim ([ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md)) |
 | L11 H2/TLS benchmark in GitHub Actions | Deliberate exclusion: shared runners cannot satisfy the quiet-host evidence contract. The contract stays out of `benchmark.yml`. A future dedicated quiet runner may add a non-gating `workflow_dispatch` job that uploads raw artifacts and never compares its numbers to shared runners |
 
+## Closed in 2.0.0
+
+The 2.0.0 milestone removes write-amplification and startup races without
+changing the cluster lifecycle. Performance numbers in the release checklist
+remain evidence-gated; a quiet-host rerun is a 2.1.0 carry-over rather than a
+claim.
+
+| Task | Resolution |
+| --- | --- |
+| P-1 Multi-core scaling | The shipped `build_cluster` / `enable_https` path is unchanged; every worker still owns one `SSL_CTX` and one loop. No second cluster abstraction or shared TLS state was added |
+| P-2 Uncapped worker scaling | `worker_count` is a compiled capacity. `ClusterOptions.worker_count` selects an explicit count, and `build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the platform CPU count. Active workers alone allocate slabs, inboxes, and thread handles; the previous fixed dispatch list and 32-worker concern are gone |
+| P-3 HTTP/1.1 pipelining | Every complete request in one read is dispatched in order. Multi-request reads append responses to the bounded ring and flush once; a lone request keeps the direct `sendmsg` path |
+| P-4 WebSocket batching | Unmasking uses the widest compiled vector (128-bit baseline, 256-bit AVX2) with scalar tails. Consecutive frames from one read share a single write flush |
+| P-5 Compressor pooling | Workers pre-open one RFC 7692 `libdeflate` context and, when enabled, one HTTP gzip codec with bounded scratch. `Response.end_gzip` never allocates on the request path |
+| P-6 Kernel flags | `TCP_NODELAY`, `TCP_QUICKACK`, and `TCP_DEFER_ACCEPT` are applied on the documented sockets; new tests read the options back. No buffer cap was expanded without evidence |
+| P-7 H2/H3 tuning | The 1.9.0 M1 result still closes HTTP/2 window tuning as measured, not needed. Linux UDP transmit uses `UDP_SEGMENT` GSO for equal-sized same-destination batches; receive GRO is deferred |
+| P-8 Startup barrier | `App.listen_all` binds up to four TCP endpoints, verifies every local port, and only then arms accepts. Per-endpoint TLS selection is supported with the application certificate |
+| P-9 TRACE | First-class opt-in method in `HttpMethod`, `Router`/`App`, the client, C ABI code 9, HTTP/2, HTTP/3 classification, OpenAPI, and TLS 0-RTT safe methods |
+
+## Re-declared in 2.0.0
+
+| Boundary | Dated reason and restoration criterion |
+| --- | --- |
+| Pipelined RPS, WebSocket echo, and `json-comp` targets | The implementation and unit gates landed, but the designated quiet host was not available for the 10M RPS, WS, and 400K RPS/P99 measurements. Rerun the v1.9.0 host contract before publishing any number; never compare shared-runner data to the quiet host |
+| UDP receive GRO | The libxev UDP read completion uses `msghdr.control = null`, so `UDP_GRO` segment boundaries are unavailable. Enabling it would make lsquic parse a coalesced buffer as one datagram. Restore when the loop exposes ancillary data or the transport moves to a raw `recvmsg` path |
+| Cross-process listener barrier | `listen_all` is in-process all-or-nothing. A cross-process socket takeover needs a shared-memory protocol and belongs to the v2.9.0 drain/takeover milestone |
+
+## Carried into 2.1.0
+
+- Quiet-host evidence for the v2.0.0 pipeline, WebSocket, `json-comp`, and
+  `latency-1m` targets, archived under the v1.9.0 evidence contract.
+- Receive-side `UDP_GRO` after the loop exposes ancillary segment sizes.
+- libxev IOCP accept overlay removal after upstream issue #252 is fixed and a
+  release contains the fix.
+- Cross-process `SO_REUSEPORT` / systemd socket-activation handoff.
+- Decisions on per-listener certificates, a bounded TRACE reflection example,
+  and an optional `uwz_app_listen_all` C entry point.
+
 ## Deliberate boundaries
 
 These are decisions, not omissions. Each has a reason and, where relevant, the

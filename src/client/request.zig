@@ -40,6 +40,7 @@ pub fn method_name(method: Method) []const u8 {
         .delete => "DELETE",
         .options => "OPTIONS",
         .query => "QUERY",
+        .trace => "TRACE",
     };
 }
 

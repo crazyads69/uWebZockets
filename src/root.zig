@@ -51,6 +51,8 @@ pub const streams = @import("http/streams.zig");
 pub const abort = @import("http/abort.zig");
 /// libdeflate-backed CompressionStream and DecompressionStream.
 pub const compression_stream = @import("http/compression_stream.zig");
+/// Reusable per-worker gzip codec pool for `Response.end_gzip`.
+pub const compression_pool = @import("http/compression_pool.zig");
 /// Zero-allocation RFC 7578 multipart parsing primitives.
 pub const multipart = @import("http/multipart.zig");
 /// Zero-allocation query-string slicing and percent decoding.

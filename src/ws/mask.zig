@@ -2,7 +2,15 @@ const builtin = @import("builtin");
 const std = @import("std");
 const zslay = @import("zslay");
 
-const Vector = @Vector(16, u8);
+/// Use a full 256-bit XOR when the target has AVX2, otherwise the baseline
+/// 128-bit SSE2/NEON lane. Both paths mask complete vectors and finish the
+/// tail with the scalar loop.
+const vector_lane_count: usize = switch (builtin.cpu.arch) {
+    .x86, .x86_64 => if (std.Target.x86.featureSetHas(builtin.cpu.features, .avx2)) 32 else 16,
+    .aarch64, .aarch64_be => 16,
+    else => 16,
+};
+const Vector = @Vector(vector_lane_count, u8);
 const use_simd = switch (builtin.cpu.arch) {
     .x86, .x86_64 => std.Target.x86.featureSetHas(
         builtin.cpu.features,
@@ -29,11 +37,11 @@ pub fn apply_scalar(buffer: []u8, masking_key: zslay.MaskingKey, position: u64) 
     }
 }
 
-/// Applies a mask in 16-byte vectors followed by a scalar tail.
+/// Applies a mask in full vectors followed by a scalar tail.
 pub fn apply_simd(buffer: []u8, masking_key: zslay.MaskingKey, position: u64) void {
     if (buffer.len == 0) return;
 
-    var key_bytes: [16]u8 = undefined;
+    var key_bytes: [vector_lane_count]u8 = undefined;
     for (&key_bytes, 0..) |*byte, index| {
         const key_index: usize = @intCast(
             (position +% @as(u64, @intCast(index))) % masking_key.len,

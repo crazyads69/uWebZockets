@@ -345,6 +345,13 @@ test "client request: brackets IPv6 hosts and omits default ports" {
         &buffer,
     );
     try std.testing.expectEqualStrings("QUERY /lookup HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", plain);
+
+    const trace = try request_writer.write_head(
+        .{ .method = .trace, .host = "127.0.0.1", .path = "/probe" },
+        .{ .port = 80, .tls = false },
+        &buffer,
+    );
+    try std.testing.expectEqualStrings("TRACE /probe HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", trace);
 }
 
 test "client request: rejects reserved and malformed fields" {

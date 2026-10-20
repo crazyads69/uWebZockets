@@ -714,8 +714,8 @@ const ClusterRunner = struct {
 
 /// Returns the port one worker's listener is bound to.
 fn worker_port(worker: *const ClusterTestApp) !u16 {
-    if (worker.server == null) return error.WorkerNotListening;
-    return tcp.listener_port(&worker.server.?);
+    if (worker.listener_count == 0) return error.WorkerNotListening;
+    return tcp.listener_port(&worker.listeners[0]);
 }
 
 /// Reserves one loopback port, then closes the listener so the cluster can
@@ -1151,8 +1151,8 @@ test "tls cluster: plaintext cluster lifecycle is unchanged" {
     defer group.deinit();
 
     try group.listen("127.0.0.1", 0);
-    try std.testing.expect(group.worker(0).?.server != null);
-    try std.testing.expect(group.worker(1).?.server != null);
+    try std.testing.expect(group.worker(0).?.listener_count != 0);
+    try std.testing.expect(group.worker(1).?.listener_count != 0);
     try std.testing.expect(group.worker(0).?.tls_ctx == null);
     try std.testing.expect(group.worker(1).?.tls_ctx == null);
 }

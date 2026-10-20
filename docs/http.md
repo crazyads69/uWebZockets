@@ -16,6 +16,12 @@ server-wide `OPTIONS`; authority-form, fragments, and userinfo are rejected.
 Responses validate control-character injection and ambiguous `Content-Length` /
 `Transfer-Encoding` before writing.
 
+Every complete request in one read buffer is dispatched in order. When another
+request already follows, its response bytes accumulate in the bounded write ring
+and the read completion ends with one socket write. A lone request keeps the
+direct nonblocking `sendmsg` fast path, so pipelining does not add a copy to the
+common case.
+
 ### Limits and rejections
 
 | Input | Default | Configured by | Oversized result |
@@ -59,10 +65,18 @@ Use the highest-level helper that fits:
 | A body produced as the transport drains | `res.begin_stream()` |
 | Server-Sent Events | `res.sse()` |
 | A file from disk | `res.send_file()` or `App.static` |
+| Gzip from the per-worker pool | `res.end_gzip()` with `with_http_compression(true)` |
 
 `Response.begin_stream()` pulls chunks from an application callback only when
 the write queue and flow-control windows have room, so response size never
 depends on the queue size.
+
+`Response.end_gzip` compresses into the worker's startup-allocated scratch,
+emits `Content-Encoding: gzip` and `Vary: Accept-Encoding`, and never allocates
+on the request path. The input must fit `ServerConfig.max_body_size`; the
+compressed result must also fit the transport's response capacity (HTTP/2 uses
+its configured response stride). Compression is opt-in; do not gzip responses
+that mix secrets with attacker-controlled input.
 
 ## Routing
 
@@ -92,7 +106,7 @@ _ = try app.get("/assets/*path", serve_asset);
 
 | Registration | Callback | Use |
 | --- | --- | --- |
-| `get` / `post` / ... | `fn (*Request, *Response) void` | Synchronous work |
+| `get` / `head` / `post` / `put` / `delete` / `patch` / `options` / `trace` / `query` / `any` | `fn (*Request, *Response) void` | Synchronous work |
 | `route_context` | `fn (*anyopaque, *Request, *Response) void` | Explicit caller-owned state |
 | `route_async` | `fn (*Request, AsyncResponse) void` | Work that finishes later |
 | context variants | `fn (*anyopaque, *Request, AsyncResponse) void` | Deferred work with state |

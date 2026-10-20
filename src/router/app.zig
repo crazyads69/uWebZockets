@@ -9,6 +9,7 @@ const radix = @import("radix.zig");
 const xev = @import("xev");
 const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 const DeflateContext = @import("../ws/deflate.zig").Context;
+const HttpCompressionPool = @import("../http/compression_pool.zig").Pool;
 const ClientAuthConfig = @import("../crypto/tls.zig").ClientAuthConfig;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
@@ -39,6 +40,16 @@ pub const default_max_ws_message_size = 16 * 1024;
 pub const default_write_queue_size = core_tcp.default_write_queue_capacity;
 /// Default inactivity timeout before an idle connection is closed.
 pub const default_idle_timeout_ms: u64 = 120_000;
+/// Maximum simultaneously bound TCP listeners on one application.
+pub const max_tcp_listeners = 4;
+
+/// One TCP endpoint accepted by `App.listen_all`.
+pub const TcpListenEndpoint = struct {
+    address: []const u8,
+    port: u16,
+    /// Per-listener TLS selection; null follows the application's context.
+    tls: ?bool = null,
+};
 /// Reports whether the compiled lsquic transport is available.
 pub const http3_available = quic.available;
 
@@ -49,6 +60,11 @@ pub const ClusterOptions = struct {
     /// Pinning is best effort: restricted cpusets and platforms without a
     /// hard-affinity API leave the worker unpinned instead of failing startup.
     cpu_affinity: bool = true,
+    /// Selects fewer workers than the compiled capacity at startup.
+    ///
+    /// Null keeps the exact compile-time count. A value of zero or a value
+    /// above the capacity fails before any worker slab is allocated.
+    worker_count: ?usize = null,
 };
 
 /// Returns the default fixed-capacity application type.
@@ -119,6 +135,11 @@ pub fn configured_app_with_route_params(
 
     return struct {
         const Self = @This();
+        /// Stable per-listener context passed to the accept callback.
+        const ListenerBinding = struct {
+            app: *Self,
+            tls: bool,
+        };
         const Pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections);
         const QuicEngine = quic.quic_engine(
             max_connections,
@@ -174,6 +195,7 @@ pub fn configured_app_with_route_params(
         ws_compression_capacity: usize = 0,
         ws_compression_owned: bool = false,
         ws_deflate: ?DeflateContext = null,
+        http_compression: ?HttpCompressionPool = null,
         write_queue_storage: []u8,
         // Router typed storage carved from the startup slab; the router binds
         // it on first route work, when the App address is stable.
@@ -212,7 +234,9 @@ pub fn configured_app_with_route_params(
         cluster_completion: xev.Completion = .{},
         cluster_stop_requested: std.atomic.Value(bool) = .init(false),
         cluster_wakeup_active: bool = false,
-        server: ?core_tcp.TcpServer = null,
+        listeners: [max_tcp_listeners]core_tcp.TcpServer = undefined,
+        bindings: [max_tcp_listeners]ListenerBinding = undefined,
+        listener_count: usize = 0,
         sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
         watcher: ?file_watch_module.Watcher = null,
         signal_watcher: ?core_signal.SignalWatcher = null,
@@ -297,6 +321,25 @@ pub fn configured_app_with_route_params(
                 layout.router_storage,
                 config.router_capacities(),
             );
+            const compression_capacity = if (layout.compression_stride == 0)
+                0
+            else
+                layout.compression_stride / 2;
+
+            // One compressor pool is opened per worker during startup. A
+            // request never allocates a codec, and a failure here releases the
+            // context before the slab ownership is transferred.
+            var ws_deflate: ?DeflateContext = null;
+            errdefer if (ws_deflate) |*context| context.deinit();
+            if (config.compression) {
+                ws_deflate = try init_ws_deflate(compression_capacity, max_ws_message_size);
+            }
+
+            var http_compression: ?HttpCompressionPool = null;
+            errdefer if (http_compression) |*pool| pool.deinit();
+            if (config.http_compression) {
+                http_compression = try HttpCompressionPool.init(config.max_body_size);
+            }
 
             var loop = try core_loop.init();
             errdefer core_loop.deinit(&loop);
@@ -327,10 +370,9 @@ pub fn configured_app_with_route_params(
                 .reject_policy = config.rejection_policy(),
                 .ws_message_storage = layout.ws_messages,
                 .ws_compression_storage = layout.compression_scratch,
-                .ws_compression_capacity = if (layout.compression_stride == 0)
-                    0
-                else
-                    layout.compression_stride / 2,
+                .ws_compression_capacity = compression_capacity,
+                .ws_deflate = ws_deflate,
+                .http_compression = http_compression,
                 .write_queue_storage = layout.write_queues,
                 .router_storage = router_storage,
                 .datagram_session_ids = layout.datagram_session_ids,
@@ -485,7 +527,7 @@ pub fn configured_app_with_route_params(
             self.watcher = null;
             if (self.signal_watcher) |*watcher| watcher.deinit();
             self.signal_watcher = null;
-            self.server = null;
+            self.listener_count = 0;
 
             if (self.quic_transport) |*transport| transport.deinit();
             self.quic_transport = null;
@@ -494,6 +536,8 @@ pub fn configured_app_with_route_params(
             self.release_tls();
             if (self.ws_deflate) |*context| context.deinit();
             self.ws_deflate = null;
+            if (self.http_compression) |*pool| pool.deinit();
+            self.http_compression = null;
             for (self.static_handlers[0..self.static_handler_count]) |maybe_handler| {
                 const handler = maybe_handler orelse continue;
                 handler.deinit();
@@ -566,7 +610,9 @@ pub fn configured_app_with_route_params(
             if (self.sweeper) |*sw| sw.stop(&self.loop);
             if (self.watcher) |*watch| watch.stop(self.loop.get_xev_loop());
             if (self.signal_watcher) |*watcher| watcher.stop();
-            if (self.server) |*server| core_tcp.close_server(server, &self.loop);
+            for (self.listeners[0..self.listener_count]) |*server| {
+                core_tcp.close_server(server, &self.loop);
+            }
             if (self.quic_transport) |*transport| transport.shutdown();
 
             for (self.pool.storage, 0..) |*conn, index| {
@@ -591,7 +637,7 @@ pub fn configured_app_with_route_params(
             if (self.signal_watcher) |*watcher| {
                 if (!watcher.is_drained()) return error.ShutdownIncomplete;
             }
-            if (self.server) |server| {
+            for (self.listeners[0..self.listener_count]) |*server| {
                 if (!server.close_complete) return error.ShutdownIncomplete;
             }
             if (self.quic_transport) |*transport| if (!transport.is_drained()) {
@@ -652,6 +698,13 @@ pub fn configured_app_with_route_params(
         pub fn query(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.query(path, handler);
+            return self;
+        }
+
+        /// Registers an opt-in TRACE route.
+        pub fn trace(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.trace(path, handler);
             return self;
         }
 
@@ -933,18 +986,18 @@ pub fn configured_app_with_route_params(
         fn ensure_ws_compression(self: *Self) !void {
             if (self.ws_deflate != null) return;
 
+            if (self.ws_compression_storage.len != 0) {
+                // ServerConfig pre-reserved paired scratch inside the startup slab.
+                self.ws_deflate = try init_ws_deflate(
+                    self.ws_compression_capacity,
+                    max_ws_message_size,
+                );
+                return;
+            }
+
             var context = try DeflateContext.init(6);
             errdefer context.deinit();
             const per_connection = try context.scratch_bound(max_ws_message_size);
-
-            if (self.ws_compression_storage.len != 0) {
-                // ServerConfig pre-reserved paired scratch inside the startup slab.
-                if (per_connection > self.ws_compression_capacity) {
-                    return error.CompressionScratchTooSmall;
-                }
-                self.ws_deflate = context;
-                return;
-            }
 
             const per_connection_storage = std.math.mul(
                 usize,
@@ -962,6 +1015,15 @@ pub fn configured_app_with_route_params(
             self.ws_compression_storage = storage;
             self.ws_compression_owned = true;
             self.ws_deflate = context;
+        }
+
+        /// Opens the per-worker compressor pool and validates scratch capacity.
+        fn init_ws_deflate(capacity: usize, message_capacity: usize) !DeflateContext {
+            var context = try DeflateContext.init(6);
+            errdefer context.deinit();
+            const per_connection = try context.scratch_bound(message_capacity);
+            if (per_connection > capacity) return error.CompressionScratchTooSmall;
+            return context;
         }
 
         /// Returns one connection's borrowed slices of the shared extra-header
@@ -1005,7 +1067,8 @@ pub fn configured_app_with_route_params(
 
         // callback triggered when the tcp server accepts a new socket.
         fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
-            const self: *Self = @ptrCast(@alignCast(user_data));
+            const binding: *const ListenerBinding = @ptrCast(@alignCast(user_data.?));
+            const self = binding.app;
             if (self.shutting_down) {
                 close_socket_now(socket);
                 return;
@@ -1074,6 +1137,7 @@ pub fn configured_app_with_route_params(
             conn.dispatch_suspended = false;
             conn.pending_request_consumed = 0;
             conn.pending_close_requested = false;
+            conn.write_batch_depth = 0;
             conn.async_response_state.cancel();
 
             const now = std.Io.Clock.now(.awake, self.io);
@@ -1100,6 +1164,7 @@ pub fn configured_app_with_route_params(
                 conn.ws_compression_output_buffer = &.{};
                 conn.ws_deflate = null;
             }
+            conn.http_compression = if (self.http_compression) |*pool| pool else null;
             const write_start = connection_index * write_queue_size;
             conn.write_queue = self.write_queue_storage[write_start .. write_start + write_queue_size];
             conn.router = &self.router;
@@ -1140,7 +1205,11 @@ pub fn configured_app_with_route_params(
                 }
             }).cb;
 
-            if (self.tls_ctx) |tls| {
+            if (binding.tls) {
+                const tls = self.tls_ctx orelse {
+                    core_tcp.close_connection(conn);
+                    return;
+                };
                 conn.init_tls(tls.ctx) catch {
                     core_tcp.close_connection(conn);
                     return;
@@ -1149,17 +1218,69 @@ pub fn configured_app_with_route_params(
             core_tcp.read_start(conn, &self.loop);
         }
 
-        /// Binds and starts the POSIX TCP listener, locking route mutation.
+        /// Binds one TCP listener and starts accepting.
         pub fn listen(self: *Self, address: []const u8, port: u16) !void {
+            return self.listen_all(&.{.{ .address = address, .port = port }});
+        }
+
+        /// Binds every endpoint, verifies the bindings, then starts accepting.
+        ///
+        /// No accept completion is armed until every socket in `endpoints` has
+        /// bound and reported a local port. A failure closes the sockets bound
+        /// by this call and leaves routes unlocked, so startup is all-or-none.
+        pub fn listen_all(self: *Self, endpoints: []const TcpListenEndpoint) !void {
+            return self.listen_all_options(endpoints, false);
+        }
+
+        fn listen_all_options(
+            self: *Self,
+            endpoints: []const TcpListenEndpoint,
+            reuse_port: bool,
+        ) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
-            if (self.server != null) return error.AlreadyListening;
+            if (self.listener_count != 0) return error.AlreadyListening;
+            if (endpoints.len == 0) return error.EmptyListenerSet;
+            if (endpoints.len > max_tcp_listeners) return error.ListenerCapacityReached;
+            for (endpoints) |endpoint| {
+                const use_tls = endpoint.tls orelse (self.tls_ctx != null);
+                if (use_tls and self.tls_ctx == null) return error.TlsNotInitialized;
+            }
             try self.ensure_router();
             // Register the metrics route before any fallible resource is
             // allocated so a failure cannot strand a socket or timer.
             try self.install_observability();
 
-            const server = try core_tcp.init_server(address, port, on_new_connection, self);
-            errdefer close_socket_now(server.listener);
+            var bound: usize = 0;
+            errdefer {
+                for (self.listeners[0..bound]) |*server| close_socket_now(server.listener);
+            }
+
+            // Phase 1: bind every endpoint without arming any accept.
+            for (endpoints, 0..) |endpoint, index| {
+                const use_tls = endpoint.tls orelse (self.tls_ctx != null);
+                self.bindings[index] = .{ .app = self, .tls = use_tls };
+                self.listeners[index] = if (reuse_port)
+                    try core_tcp.init_reuse_port_server(
+                        endpoint.address,
+                        endpoint.port,
+                        on_new_connection,
+                        &self.bindings[index],
+                    )
+                else
+                    try core_tcp.init_server(
+                        endpoint.address,
+                        endpoint.port,
+                        on_new_connection,
+                        &self.bindings[index],
+                    );
+                bound += 1;
+            }
+
+            // Phase 2: the barrier. Every kernel socket must report a usable
+            // local address before port 8080 (or any other listener) accepts.
+            for (self.listeners[0..bound]) |*server| {
+                _ = try core_tcp.listener_port(server);
+            }
 
             var sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null;
             if (idle_timeout_ms != 0 or self.router.has_ws_heartbeats()) {
@@ -1169,20 +1290,26 @@ pub fn configured_app_with_route_params(
                 if (sweeper) |*sw| sw.deinit();
             }
 
+            // Phase 3: publish state, then arm accepts for the whole set.
+            self.listener_count = bound;
             self.routes_locked = true;
-            self.server = server;
             self.sweeper = sweeper;
-            core_tcp.accept_start(&self.server.?, &self.loop);
+            for (self.listeners[0..bound]) |*server| {
+                core_tcp.accept_start(server, &self.loop);
+            }
             if (self.sweeper) |*sw| {
                 sw.start(&self.loop);
             }
 
-            if (!self.write_ready_summary(
-                if (self.tls_ctx != null) "https" else "http",
-                address,
-                port,
-            )) {
-                log.info("server listening on {s}:{d}", .{ address, port });
+            for (endpoints) |endpoint| {
+                const scheme = if (endpoint.tls orelse (self.tls_ctx != null)) "https" else "http";
+                if (!self.write_ready_summary(
+                    scheme,
+                    endpoint.address,
+                    endpoint.port,
+                )) {
+                    log.info("server listening on {s}:{d}", .{ endpoint.address, endpoint.port });
+                }
             }
         }
 
@@ -1386,6 +1513,7 @@ pub fn configured_app_with_route_params(
                 workers: []Self,
                 inboxes: []ClusterInbox,
                 threads: []std.Thread,
+                active_workers: usize = worker_count,
                 thread_count: usize = 0,
                 worker_failed: std.atomic.Value(bool) = .init(false),
                 startup_options: ClusterOptions = .{},
@@ -1405,11 +1533,34 @@ pub fn configured_app_with_route_params(
                     comptime config: config_module.ServerConfig,
                     startup_options: ClusterOptions,
                 ) !Cluster {
-                    const workers = try allocator.alloc(Self, worker_count);
+                    return init_with_worker_count(
+                        allocator,
+                        io,
+                        config,
+                        startup_options,
+                        startup_options.worker_count orelse worker_count,
+                    );
+                }
+
+                /// Builds `active_count` workers inside the compiled capacity.
+                ///
+                /// Only the active workers allocate slabs, inboxes, and thread
+                /// handles. Values outside the capacity fail before allocation.
+                pub fn init_with_worker_count(
+                    allocator: std.mem.Allocator,
+                    io: std.Io,
+                    comptime config: config_module.ServerConfig,
+                    startup_options: ClusterOptions,
+                    active_count: usize,
+                ) !Cluster {
+                    if (active_count == 0 or active_count > worker_count) {
+                        return error.InvalidWorkerCount;
+                    }
+                    const workers = try allocator.alloc(Self, active_count);
                     errdefer allocator.free(workers);
-                    const inboxes = try allocator.alloc(ClusterInbox, worker_count);
+                    const inboxes = try allocator.alloc(ClusterInbox, active_count);
                     errdefer allocator.free(inboxes);
-                    const threads = try allocator.alloc(std.Thread, worker_count);
+                    const threads = try allocator.alloc(std.Thread, active_count);
                     errdefer allocator.free(threads);
                     for (inboxes) |*inbox| inbox.* = .{};
 
@@ -1427,6 +1578,7 @@ pub fn configured_app_with_route_params(
                         .workers = workers,
                         .inboxes = inboxes,
                         .threads = threads,
+                        .active_workers = active_count,
                         .startup_options = startup_options,
                         .cores = core_affinity.CoreSelection.init(),
                     };
@@ -1445,6 +1597,7 @@ pub fn configured_app_with_route_params(
                     self.workers = &.{};
                     self.inboxes = &.{};
                     self.threads = &.{};
+                    self.active_workers = 0;
                     self.deinitialized = true;
                 }
 
@@ -1507,7 +1660,7 @@ pub fn configured_app_with_route_params(
                         if (app_worker.shutting_down or app_worker.deinitialized) {
                             return error.ApplicationUnavailable;
                         }
-                        if (app_worker.server != null) return error.AlreadyListening;
+                        if (app_worker.listener_count != 0) return error.AlreadyListening;
                         if (app_worker.tls_ctx != null) return error.TlsAlreadyEnabled;
                         app_worker.tls_ctx = switch (source) {
                             .pem_files => |credentials| try TlsContext.init(
@@ -1565,7 +1718,7 @@ pub fn configured_app_with_route_params(
                     if (self.deinitialized) return error.ClusterDeinitialized;
 
                     self.worker_failed.store(false, .release);
-                    for (0..worker_count) |index| {
+                    for (0..self.active_workers) |index| {
                         self.threads[index] = std.Thread.spawn(.{}, worker_main, .{ self, index }) catch |err| {
                             self.request_shutdown();
                             for (self.threads[0..self.thread_count]) |thread| thread.join();
@@ -1661,25 +1814,10 @@ pub fn configured_app_with_route_params(
         }
 
         fn listen_reuse_port(self: *Self, address: []const u8, port: u16) !void {
-            if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
-            if (self.server != null) return error.AlreadyListening;
-            try self.ensure_router();
-            try self.install_observability();
-
-            const server = try core_tcp.init_reuse_port_server(address, port, on_new_connection, self);
-            errdefer close_socket_now(server.listener);
-            var sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null;
-            if (idle_timeout_ms != 0 or self.router.has_ws_heartbeats()) {
-                sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
-            }
-            errdefer {
-                if (sweeper) |*sw| sw.deinit();
-            }
-            self.routes_locked = true;
-            self.server = server;
-            self.sweeper = sweeper;
-            core_tcp.accept_start(&self.server.?, &self.loop);
-            if (self.sweeper) |*sw| sw.start(&self.loop);
+            return self.listen_all_options(
+                &.{.{ .address = address, .port = port }},
+                true,
+            );
         }
 
         fn attach_cluster_inbox(self: *Self, inbox: *ClusterInbox) !void {

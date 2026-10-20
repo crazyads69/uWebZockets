@@ -125,6 +125,7 @@ pub const HttpMethod = enum(u8) {
     any,
     query,
     connect,
+    trace,
 
     /// Parses a case-sensitive HTTP method token.
     pub fn parse(value: []const u8) ?HttpMethod {
@@ -137,6 +138,7 @@ pub const HttpMethod = enum(u8) {
         if (std.mem.eql(u8, value, "OPTIONS")) return .options;
         if (std.mem.eql(u8, value, "QUERY")) return .query;
         if (std.mem.eql(u8, value, "CONNECT")) return .connect;
+        if (std.mem.eql(u8, value, "TRACE")) return .trace;
         return null;
     }
 
@@ -153,6 +155,15 @@ pub const HttpMethod = enum(u8) {
             .any => "",
             .query => "QUERY",
             .connect => "CONNECT",
+            .trace => "TRACE",
+        };
+    }
+
+    /// Reports whether HTTP/1.1 TLS 0-RTT may dispatch this method.
+    pub fn early_data_safe(method: HttpMethod) bool {
+        return switch (method) {
+            .get, .head, .options, .trace => true,
+            else => false,
         };
     }
 };
@@ -168,12 +179,13 @@ fn lower_method(method: HttpMethod) []const u8 {
         .options => "options",
         .query => "x-query",
         .connect => "x-connect",
+        .trace => "trace",
         .any => "x-any",
     };
 }
 
 const method_count = @typeInfo(HttpMethod).@"enum".fields.len;
-const concrete_methods = [_]HttpMethod{ .get, .head, .post, .put, .delete, .patch, .options, .query };
+const concrete_methods = [_]HttpMethod{ .get, .head, .post, .put, .delete, .patch, .options, .trace, .query };
 const all_method_mask: u16 = ((@as(u16, 1) << method_count) - 1) &
     ~(@as(u16, 1) << @intFromEnum(HttpMethod.any));
 
@@ -826,6 +838,11 @@ pub const Router = struct {
     /// Registers a safe, idempotent RFC 10008 QUERY route.
     pub fn query(self: *Router, path: []const u8, handler: Handler) !void {
         return self.register_http(path, .query, handler);
+    }
+
+    /// Registers an opt-in TRACE route.
+    pub fn trace(self: *Router, path: []const u8, handler: Handler) !void {
+        return self.register_http(path, .trace, handler);
     }
 
     /// Registers a synchronous fallback method route.

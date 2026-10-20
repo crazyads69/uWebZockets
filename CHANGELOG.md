@@ -3,6 +3,112 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [2.0.0] - 2026-10-20
+
+This release removes write-syscall amplification, batches WebSocket echoes,
+moves compression codecs to worker startup, adds a deterministic multi-port
+listener barrier, and completes the ordinary HTTP method surface with TRACE. The
+cluster API and C struct layouts are unchanged; the only C enum addition is
+append-only. No performance number is claimed without a quiet-host rerun.
+
+### Added
+
+- `listen_all` binds up to four TCP endpoints, verifies every local port, and
+  only then arms all accept completions. A failed bind closes the sockets
+  created by that call and leaves routes unlocked. Endpoints may select TLS
+  independently while sharing the application certificate. Listener port
+  verification reads both IPv4 and IPv6 socket addresses.
+- `ClusterOptions.worker_count` selects an explicit active count, and
+  `build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the
+  platform CPU count at startup. Only active workers allocate slabs, inboxes,
+  and thread handles. The `examples/tls_cluster.zig` runner accepts the
+  canonical variable and keeps `UWZ_WORKERS` as a compatibility alias.
+- Per-worker HTTP gzip pooling: `with_http_compression(true)` opens one
+  `libdeflate` compressor and bounded scratch during startup, and
+  `Response.end_gzip` compresses HTTP/1.1 and HTTP/2 responses without a
+  request-path allocation. `compression_pool.Pool` is exported for direct use.
+- Opt-in TRACE support across `HttpMethod`, `Router.trace`, `App.trace`, the
+  client `Method`, C ABI `UWZ_HTTP_TRACE = 9`, HTTP/2, OpenAPI, and the HTTP/3
+  replay-safety classifier. TRACE is admitted as TLS 0-RTT-safe; no automatic
+  route or RFC 9110 echo response is synthesized.
+- Linux UDP transmit batching: equal-sized lsquic packets for one destination
+  use one `sendmsg` with `UDP_SEGMENT` (GSO), with a per-packet fallback for
+  mixed sizes, unsupported kernels, and non-Linux targets.
+- Regression coverage for TRACE parsing and dispatch, 0-RTT classification,
+  pipelined write batching, WebSocket SIMD equivalence, startup compressor
+  pooling, multi-listener binding, per-listener TLS selection, runtime worker
+  counts, TCP flags, and loopback GSO delivery.
+
+### Changed
+
+- HTTP/1.1 reads that contain more than one complete request now append every
+  response to the bounded write ring and flush once. A lone request keeps the
+  direct nonblocking `sendmsg` fast path.
+- Consecutive WebSocket frames from one read completion share one write flush.
+  Unmasking uses a 256-bit vector on AVX2 targets and keeps the 128-bit
+  SSE2/NEON baseline with a scalar tail.
+- `ServerConfig.http_compression` and `Server.builder(...).with_http_compression`
+  opt into the HTTP gzip pool. The existing RFC 7692 `compression` switch and
+  scratch planning are unchanged.
+- `Cluster.worker(index)` and every cluster loop operate on the active worker
+  slice, so a large compiled capacity no longer reserves memory for unused
+  inboxes.
+- The TLS cluster example dispatches the runtime worker count instead of a
+  fixed 1/2/4/8 switch, and `tls-single` defaults to one worker when no override
+  is set.
+
+### Fixed
+
+- HTTP/2 WebSocket tunnel setup no longer reads an uninitialized `WebSocket`
+  slot before the first upgrade. A reused pooled connection or an optimized
+  build could otherwise treat the tunnel as capacity-reached and skip the
+  handshake.
+- Pipelined plaintext responses no longer issue one write syscall per response
+  when the read already contains another complete request. If the accumulated
+  batch would overflow the ring, the completed batch is drained before the next
+  response is admitted instead of disconnecting mid-pipeline.
+- A direct batch flush skips streaming producer connections and leaves file
+  bodies on the completion path, so a drained socket still resumes the producer
+  or file pump.
+- IPv6 listener port verification uses a family-sized socket-address buffer, so
+  `listen_all` does not regress `App.listen("::", ...)` on Windows.
+- WebSocket echo paths no longer arm a completion per buffered frame.
+- Startup with auxiliary listeners can no longer race the primary port into
+  accepting before later sockets are bound.
+- HTTP response compression no longer allocates a codec when an application
+  opts into the startup pool.
+
+### Security
+
+- TRACE is opt-in and documented as a cross-site tracing risk. The library does
+  not synthesize the RFC 9110 echo response; any application echo must redact
+  `Authorization`, `Cookie`, `Proxy-Authorization`, and application secrets and
+  bound the reflected bytes to the response capacity.
+- TRACE joins `GET`, `HEAD`, and `OPTIONS` in the TLS 0-RTT safe-method
+  allowlist. `QUERY` remains replay-unsafe and still receives `425 Too Early`
+  during early data.
+- HTTP gzip is opt-in. Do not compress responses that mix secrets with
+  attacker-controlled input.
+- No C ABI enum value was renumbered; `UWZ_HTTP_TRACE = 9` is appended after
+  `UWZ_HTTP_QUERY = 8`. CONNECT remains internal and is not exposed through the
+  application or C route APIs.
+
+### Limits
+
+- The pipelined-throughput, WebSocket-echo, and `json-comp` targets in the v2.0
+  checklist require the designated quiet host. Implementation and unit gates
+  landed, but no number is published from a shared or unrecorded run. The rerun
+  is carried into the 2.1.0 evidence track.
+- UDP receive-side `UDP_GRO` is disabled: the libxev UDP completion does not
+  expose ancillary segment boundaries, so a coalesced buffer would be parsed as
+  one datagram. Transmit GSO is enabled and tested.
+- `listen_all` is an in-process all-or-nothing barrier. Cross-process socket
+  takeover remains scheduled for the v2.9.0 drain milestone.
+- The libxev IOCP accept overlay and pin are unchanged while upstream issue
+  #252 remains open. No dependency pin was moved in this release.
+- Windows support still depends on the native runtime job being green for the
+  release commit; this release does not publish Windows binaries.
+
 ## [1.9.0] - 2026-10-20
 
 This release closes or re-declares every limit from the v1.8.5/v1.8.9

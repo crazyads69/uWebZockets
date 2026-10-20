@@ -57,6 +57,14 @@ fn dummy_accept(socket: @import("xev").TCP, user_data: ?*anyopaque) void {
 }
 
 // test tcp server initialization.
+test "core: tcp listener port supports IPv6" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const server = tcp.init_server("::1", 0, dummy_accept, null) catch
+        return error.SkipZigTest;
+    defer tcp.close_socket(@import("xev").tcp_fd(server.listener));
+    try std.testing.expect(try tcp.listener_port(&server) != 0);
+}
+
 test "core: tcp server init" {
     // bind to ephemeral port 0 to prevent port collisions during tests.
     const server = try tcp.init_server("127.0.0.1", 0, dummy_accept, null);
@@ -151,6 +159,99 @@ test "tcp: empty-ring write takes the direct sendmsg path" {
     try std.testing.expectEqualStrings(payload, received[0..received_len]);
 }
 
+test "tcp: write batch defers and flushes pipelined responses in order" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer {
+        _ = std.posix.system.close(pair[0]);
+        _ = std.posix.system.close(pair[1]);
+    }
+
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var ring: [256]u8 = undefined;
+    var conn = tcp.TcpConnection{
+        .socket = @import("xev").TCP.initFd(pair[0]),
+        .io = std.testing.io,
+        .write_queue = &ring,
+    };
+    conn.loop = event_loop.get_xev_loop();
+
+    conn.begin_write_batch();
+    try conn.write_data("one");
+    try conn.write_data("two");
+
+    // Both responses sit in the ring and no completion was armed yet.
+    try std.testing.expectEqual(@as(usize, 6), conn.write_len);
+    try std.testing.expect(!conn.is_writing);
+    try std.testing.expectEqualStrings("onetwo", ring[0..6]);
+
+    conn.end_write_batch();
+    if (conn.is_writing) {
+        try event_loop.xev_loop.run(.until_done);
+    }
+    try std.testing.expectEqual(@as(usize, 0), conn.write_len);
+    try std.testing.expect(!conn.is_writing);
+
+    var received: [6]u8 = undefined;
+    var received_len: usize = 0;
+    while (received_len < received.len) {
+        const read = try std.posix.read(pair[1], received[received_len..]);
+        if (read == 0) break;
+        received_len += read;
+    }
+    try std.testing.expectEqualStrings("onetwo", received[0..received_len]);
+}
+
+test "tcp: write batch drains before a pipelined overflow" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer {
+        _ = std.posix.system.close(pair[0]);
+        _ = std.posix.system.close(pair[1]);
+    }
+
+    var ring: [64]u8 = undefined;
+    var conn = tcp.TcpConnection{
+        .socket = @import("xev").TCP.initFd(pair[0]),
+        .io = std.testing.io,
+        .write_queue = &ring,
+    };
+
+    const first = [_]u8{'a'} ** 40;
+    const second = [_]u8{'b'} ** 40;
+    conn.begin_write_batch();
+    try conn.write_data(&first);
+    try conn.write_data(&second);
+
+    // The second write could not fit beside the first, so the first 40 bytes
+    // were flushed and only the second response remains queued.
+    try std.testing.expectEqual(@as(usize, 40), conn.write_len);
+    try std.testing.expectEqualStrings(&second, ring[0..40]);
+
+    conn.end_write_batch();
+    try std.testing.expectEqual(@as(usize, 0), conn.write_len);
+
+    var received: [80]u8 = undefined;
+    var received_len: usize = 0;
+    while (received_len < received.len) {
+        const read = try std.posix.read(pair[1], received[received_len..]);
+        if (read == 0) break;
+        received_len += read;
+    }
+    try std.testing.expectEqualSlices(u8, &first, received[0..40]);
+    try std.testing.expectEqualSlices(u8, &second, received[40..80]);
+}
+
 test "tcp: set_nodelay enables TCP_NODELAY on a socket" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
 
@@ -170,6 +271,51 @@ test "tcp: set_nodelay enables TCP_NODELAY on a socket" {
         fd,
         std.posix.IPPROTO.TCP,
         std.posix.TCP.NODELAY,
+        @ptrCast(&value),
+        &length,
+    );
+    try std.testing.expectEqual(@as(c_int, 0), rc);
+    try std.testing.expectEqual(@as(c_int, 1), value);
+}
+
+test "tcp: listener sets TCP_DEFER_ACCEPT" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const server = try tcp.init_server("127.0.0.1", 0, dummy_accept, null);
+    defer tcp.close_socket(@import("xev").tcp_fd(server.listener));
+
+    var value: c_int = 0;
+    var length: std.posix.socklen_t = @sizeOf(c_int);
+    const rc = std.c.getsockopt(
+        @import("xev").tcp_fd(server.listener),
+        std.posix.IPPROTO.TCP,
+        std.os.linux.TCP.DEFER_ACCEPT,
+        @ptrCast(&value),
+        &length,
+    );
+    try std.testing.expectEqual(@as(c_int, 0), rc);
+    try std.testing.expect(value > 0);
+}
+
+test "tcp: request_quickack sets TCP_QUICKACK" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const fd = std.c.socket(
+        std.posix.AF.INET,
+        std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
+        0,
+    );
+    if (fd < 0) return error.SkipZigTest;
+    defer _ = std.c.close(fd);
+
+    tcp.request_quickack(fd);
+
+    var value: c_int = 0;
+    var length: std.posix.socklen_t = @sizeOf(c_int);
+    const rc = std.c.getsockopt(
+        fd,
+        std.posix.IPPROTO.TCP,
+        std.os.linux.TCP.QUICKACK,
         @ptrCast(&value),
         &length,
     );

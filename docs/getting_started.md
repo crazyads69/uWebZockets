@@ -158,7 +158,7 @@ not supported. See [tls.md](tls.md#tls-enabled-clusters).
 | `zig build hello_world` | Minimal HTTP/1.1 route on `App` |
 | `zig build https_server` | HTTPS on port 3443 with an in-memory certificate |
 | `zig build shared_nothing_cluster` | Four pinned workers, one slab each |
-| `zig build tls_cluster` | Four TLS workers on port 8443 with per-worker certificates |
+| `zig build tls_cluster` | Runtime-selected TLS workers (CPU count by default) on port 8443 with per-worker certificates |
 | `zig build basic_microservice` | `Presets.microservice` with JSON helpers |
 | `zig build custom_builder` | Fluent overrides and the 50 MiB body path |
 | `zig build chat_server` | WebSocket pub/sub with bounded topics |

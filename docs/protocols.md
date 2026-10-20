@@ -64,7 +64,7 @@ Lower-level methods such as `end_with_headers`, `begin_chunked`, and
 | HTTP/1.1 | h1spec suite plus deterministic adversarial cases in the unit suite |
 | HTTP/2 | Bounded RFC 9113 routing; one RFC 8441 WebSocket tunnel per connection |
 | HTTP/3 | Bounded RFC 9114 request/response routing verified against curl/ngtcp2 and aioquic; extended CONNECT, WebTransport, push, and application datagrams remain helper-only |
-| HTTP extensions | RFC 10008 `QUERY` routing with syntactic content-type checks |
+| HTTP extensions | RFC 10008 `QUERY` routing with syntactic content-type checks; opt-in `TRACE` routing across HTTP/1.1, HTTP/2, HTTP/3, and the client |
 
 See [operations.md](operations.md) for the full verification matrix and
 [roadmap.md](roadmap.md) for the boundaries that are deliberate rather than

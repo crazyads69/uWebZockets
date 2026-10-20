@@ -349,6 +349,7 @@ fn register_http_route(
         6 => try app.options(path, handler),
         7 => try app.any(path, handler),
         8 => try app.query(path, handler),
+        9 => try app.trace(path, handler),
         else => return error.InvalidMethod,
     };
 }
@@ -364,6 +365,7 @@ fn http_method(method: c_int) ?radix.HttpMethod {
         6 => .options,
         7 => .any,
         8 => .query,
+        9 => .trace,
         else => null,
     };
 }

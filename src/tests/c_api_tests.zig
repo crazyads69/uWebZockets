@@ -194,7 +194,7 @@ test "C async QUERY registration and middleware use fixed capacities" {
     ));
     try std.testing.expectEqual(invalid_argument, uwz_app_route_async(
         app,
-        9,
+        10,
         path.ptr,
         path.len,
         pending_handler,

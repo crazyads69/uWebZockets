@@ -49,6 +49,7 @@ into these regions, in order:
 | Response write queues | `max_connections * write_queue_size` |
 | WebSocket message storage | `max_connections * max_ws_message_size` |
 | RFC 7692 compression scratch | `max_connections * 2 * worst_case_scratch` when enabled |
+| HTTP gzip pool | One codec plus `max_body_size`-bounded output scratch per active worker when `http_compression = true` |
 | Router storage (nodes, patterns, middleware, registry) | appended after the per-connection regions |
 
 `request_stride` is the request line, header block, framing slack, and

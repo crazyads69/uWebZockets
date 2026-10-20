@@ -20,7 +20,8 @@ the framework expects you to configure.
 - TLS is 1.3 only. HTTP/1.1 and HTTP/2 share one context advertising `h2` then
   `http/1.1`; HTTP/3 uses a separate context advertising `h3`.
 - TCP enables 0-RTT early data and dispatches only safe methods (`GET`, `HEAD`,
-  `OPTIONS`) before the handshake confirms; anything else gets `425 Too Early`.
+  `OPTIONS`, `TRACE`) before the handshake confirms; anything else gets
+  `425 Too Early`.
   QUIC keeps early data disabled.
 - There is no hot certificate reload. Rotate by rolling a new process; keep the
   old one draining until it exits. This is a dated decision, not an omission;

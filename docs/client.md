@@ -97,7 +97,7 @@ with `error.InflightCapacityReached` instead of growing memory.
 
 | Name | Description |
 | --- | --- |
-| `Method` | `get`, `head`, `post`, `put`, `patch`, `delete`, `options`, `query`. `query` serializes as `QUERY`. |
+| `Method` | `get`, `head`, `post`, `put`, `patch`, `delete`, `options`, `query`, `trace`. `query` serializes as `QUERY`; `trace` serializes as `TRACE`. |
 | `Header` | Borrowed `name` and `value` slices. |
 | `Request` | `method`, `host`, `path`, `headers`, `body`. Slices are borrowed. |
 | `TlsOptions` | `verify`, `ca_path`, `server_name`. |

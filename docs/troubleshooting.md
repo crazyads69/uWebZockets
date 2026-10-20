@@ -4,6 +4,17 @@ Common symptoms, what they mean, and the smallest fix. If a failure is not
 here, open an issue with the exact error name, the command, and the relevant
 capacity configuration.
 
+## Build and cache
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `ld.lld: cannot open ~/.cache/zig/o/.../crt1.o` or `libc++.a` | The Zig global cache index still references object files that were removed, usually after a manual cache cleanup or a partial GC. Delete the global cache and rebuild: `rm -rf ~/.cache/zig` then rerun the build. The cache is regenerated and no source or dependency pin is affected |
+| Builds with one cache succeed while the default cache fails | A previous run used `ZIG_GLOBAL_CACHE_DIR`; the default cache is incomplete. Use one cache consistently, or clear the stale one before switching back |
+| `sanitizers require -Dsanitizer-lib-dir` | Run the sanitizer gate inside `nix develop path:.`, or pass `-Dsanitizer-lib-dir=/path/to/compiler-rt/lib` and the matching libc/linker overrides from `docs/operations.md` |
+
+Never delete `.zig-cache` or the global cache as a way to hide a compile error;
+use it only for the file-not-found cache symptoms above and rerun the full gate.
+
 ## Capacity and rejection responses
 
 | Status | Meaning | Fix |

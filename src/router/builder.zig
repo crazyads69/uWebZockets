@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const app_module = @import("app.zig");
+const cluster_module = @import("cluster.zig");
 const config_module = @import("config.zig");
 
 /// Human-readable capacities accepted by the builder.
@@ -245,6 +246,14 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return .{ .io = self.io };
         }
 
+        /// Opens one per-worker gzip pool for `Response.end_gzip`.
+        pub fn with_http_compression(
+            self: Self,
+            comptime enabled: bool,
+        ) configured_builder(config.with(.{ .http_compression = enabled })) {
+            return .{ .io = self.io };
+        }
+
         /// Requests the opportunistic AF_XDP kernel-bypass transport.
         ///
         /// Non-Linux targets compile the request out, and Linux hosts that
@@ -365,6 +374,51 @@ pub fn configured_builder(comptime config: ServerConfig) type {
                 allocator,
                 self.io,
                 config,
+                options,
+            );
+        }
+
+        /// Builds a fixed-capacity cluster with a runtime-selected worker count.
+        ///
+        /// `worker_capacity` sizes the compile-time worker, inbox, and thread
+        /// arrays. `worker_count` must be nonzero and no larger than the
+        /// capacity; this is the entry point for `UWEBZOCKETS_WORKERS` and
+        /// CPU-count defaults without compiling a type per count.
+        pub fn build_cluster_with_worker_count(
+            self: Self,
+            allocator: std.mem.Allocator,
+            comptime worker_capacity: usize,
+            worker_count: usize,
+            options: app_module.ClusterOptions,
+        ) !AppType.cluster(worker_capacity) {
+            return AppType.cluster(worker_capacity).init_with_worker_count(
+                allocator,
+                self.io,
+                config,
+                options,
+                worker_count,
+            );
+        }
+
+        /// Resolves `UWEBZOCKETS_WORKERS`, or the platform CPU count, at startup.
+        ///
+        /// This is the environment-aware cluster entry point. Invalid, zero, or
+        /// above-capacity values fail before any worker slab is allocated.
+        pub fn build_cluster_from_environment(
+            self: Self,
+            allocator: std.mem.Allocator,
+            comptime worker_capacity: usize,
+            environ: *const std.process.Environ.Map,
+            options: app_module.ClusterOptions,
+        ) !AppType.cluster(worker_capacity) {
+            const workers = try cluster_module.worker_count_from_environment(
+                environ,
+                worker_capacity,
+            );
+            return self.build_cluster_with_worker_count(
+                allocator,
+                worker_capacity,
+                workers,
                 options,
             );
         }

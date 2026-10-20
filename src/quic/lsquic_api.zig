@@ -101,6 +101,12 @@ pub fn send_packets(
     if (count == 0) return 0;
 
     const packet_count: usize = @intCast(count);
+    if (builtin.os.tag == .linux) {
+        if (send_segmented(fd, specs, packet_count)) |segments| {
+            if (segments == 0) return -1;
+            return @intCast(segments);
+        }
+    }
     var sent: usize = 0;
     packet_loop: while (sent < packet_count) : (sent += 1) {
         const spec = specs[sent];
@@ -181,6 +187,98 @@ pub fn send_packets(
 
     if (sent == 0) return -1;
     return @intCast(sent);
+}
+
+/// Maximum packets coalesced into one Linux UDP GSO send.
+const gso_max_segments = 64;
+const udp_segment_option: c_int = 103;
+
+/// Sends an equal-sized same-destination batch with one UDP_SEGMENT sendmsg.
+///
+/// Returns the segment count when the kernel accepted the batch, null when the
+/// batch is not eligible or the send failed before bytes were transmitted, and
+/// zero when a partial send left no complete segment.
+fn send_segmented(
+    fd: std.posix.socket_t,
+    specs: [*c]const c.lsquic_out_spec,
+    packet_count: usize,
+) ?usize {
+    if (packet_count < 2 or packet_count > gso_max_segments) return null;
+    const first = specs[0];
+    if (first.dest_sa == null or first.iov == null or first.iovlen == 0) return null;
+
+    const address_length: c.socklen_t = switch (first.dest_sa.*.sa_family) {
+        c.AF_INET => @sizeOf(std.posix.sockaddr.in),
+        c.AF_INET6 => @sizeOf(std.posix.sockaddr.in6),
+        else => return null,
+    };
+    const first_address = @as([*]const u8, @ptrCast(first.dest_sa))[0..address_length];
+
+    var segment_size: usize = 0;
+    for (first.iov[0..first.iovlen]) |part| {
+        if (part.iov_len > max_udp_payload_size -| segment_size) return null;
+        segment_size += part.iov_len;
+    }
+    if (segment_size == 0 or segment_size > std.math.maxInt(u16)) return null;
+
+    var iovecs: [gso_max_segments]c.struct_iovec = undefined;
+    var iov_count: usize = 0;
+    for (0..packet_count) |packet_index| {
+        const spec = specs[packet_index];
+        if (spec.dest_sa == null or spec.iov == null or spec.iovlen == 0) return null;
+        if (spec.ecn != 0) return null;
+        if (spec.dest_sa.*.sa_family != first.dest_sa.*.sa_family) return null;
+        const address = @as([*]const u8, @ptrCast(spec.dest_sa))[0..address_length];
+        if (!std.mem.eql(u8, first_address, address)) return null;
+
+        var packet_size: usize = 0;
+        for (spec.iov[0..spec.iovlen]) |part| {
+            if (part.iov_len > max_udp_payload_size -| packet_size) return null;
+            packet_size += part.iov_len;
+            if (iov_count == iovecs.len) return null;
+            iovecs[iov_count] = .{
+                .iov_base = part.iov_base,
+                .iov_len = part.iov_len,
+            };
+            iov_count += 1;
+        }
+        if (packet_size != segment_size) return null;
+    }
+
+    const cmsg_data_offset = comptime std.mem.alignForward(
+        usize,
+        @sizeOf(c.struct_cmsghdr),
+        @alignOf(usize),
+    );
+    const cmsg_len = comptime cmsg_data_offset + @sizeOf(u16);
+    var control: [cmsg_len]u8 align(@alignOf(c.struct_cmsghdr)) = undefined;
+    const cmsg: *c.struct_cmsghdr = @ptrCast(&control);
+    cmsg.* = std.mem.zeroes(c.struct_cmsghdr);
+    cmsg.cmsg_len = @intCast(cmsg_len);
+    cmsg.cmsg_level = c.IPPROTO_UDP;
+    cmsg.cmsg_type = udp_segment_option;
+    const segment_value: *u16 = @ptrCast(@alignCast(&control[cmsg_data_offset]));
+    segment_value.* = @intCast(segment_size);
+
+    var message = c.struct_msghdr{
+        .msg_name = @ptrCast(@constCast(first.dest_sa)),
+        .msg_namelen = address_length,
+        .msg_iov = &iovecs,
+        .msg_iovlen = @intCast(iov_count),
+        .msg_control = &control,
+        .msg_controllen = cmsg.cmsg_len,
+    };
+    const written = c.sendmsg(fd, &message, c.MSG_DONTWAIT | c.MSG_NOSIGNAL);
+    if (written < 0) return null;
+
+    const total_size = segment_size * packet_count;
+    if (@as(usize, @intCast(written)) > total_size) return null;
+    const segments = @divTrunc(@as(usize, @intCast(written)), segment_size);
+    if (segments == 0) {
+        set_errno(.AGAIN);
+        return 0;
+    }
+    return segments;
 }
 
 fn winsock_errno(wsa_error: c_int) std.c.E {

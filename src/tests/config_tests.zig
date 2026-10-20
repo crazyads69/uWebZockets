@@ -228,7 +228,7 @@ test "config: with merges request limit overrides" {
 test "config: default slab carries the router region at the end" {
     const config = ServerConfig{};
     const router_bytes = try config.router_storage_bytes();
-    try std.testing.expectEqual(@as(usize, 863_872), router_bytes);
+    try std.testing.expectEqual(@as(usize, 874_112), router_bytes);
 
     const total = try config.slab_bytes();
     // The connection slab dominates the default footprint. The inline route
@@ -239,12 +239,14 @@ test "config: default slab carries the router region at the end" {
     // libxev wrappers added the epoll variants to every per-connection
     // completion, and the static-route index added its 512 hash slots, 512
     // node slots, and 256 parent links (5_632 bytes) to the router region,
-    // moving 681_711_744 to this total.
-    try std.testing.expectEqual(@as(usize, 681_717_376), total);
+    // moving 681_711_744 to this total. TRACE adds one 8-byte handler slot per
+    // node, moving 681_717_376 to 681_727_616. The HTTP gzip pool pointer adds
+    // eight bytes per connection, moving the total to 681_735_808.
+    try std.testing.expectEqual(@as(usize, 681_735_808), total);
     // The default route-param extras stride is zero: the region extends the
     // slab by exactly one router region's bytes.
     try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());
-    try std.testing.expectEqual(@as(usize, 680_853_504), total - router_bytes);
+    try std.testing.expectEqual(@as(usize, 680_861_696), total - router_bytes);
 }
 
 test "config: slab bytes grow with each router capacity knob" {
@@ -676,6 +678,25 @@ test "deflate: planner bound covers negotiated compression scratch" {
         const planned = try support.ws_deflate.worst_case_scratch_bound(input_len);
         try std.testing.expect(planned >= negotiated);
     }
+}
+
+test "deflate: configured workers open the compressor pool at startup" {
+    const TestApp = app_module.configured_app_with_timeout(1, 1024, 4096, 0);
+    const config = comptime config_module.default_config.with(.{
+        .max_connections = 1,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .compression = true,
+        .http_compression = true,
+    });
+    var server = try TestApp.init_configured(std.testing.io, std.testing.allocator, config);
+    defer server.deinit();
+
+    // The codec exists before any route is registered or request is parsed.
+    try std.testing.expect(server.ws_deflate != null);
+    try std.testing.expect(server.http_compression != null);
+    try std.testing.expect(server.ws_compression_storage.len != 0);
 }
 
 test "config: app init carves request buffers out of the slab" {

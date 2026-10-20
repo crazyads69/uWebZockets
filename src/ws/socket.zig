@@ -19,7 +19,7 @@ pub const ControlFrameBuffer = [125]u8;
 
 /// Event-loop-confined server WebSocket borrowing its TCP connection.
 pub const WebSocket = struct {
-    conn: *TcpConnection,
+    conn: *TcpConnection = undefined,
     pubsub: ?*PubSubEngine = null,
     h2_stream_id: ?u32 = null,
     behavior: WsBehavior = .{},

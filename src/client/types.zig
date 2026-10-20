@@ -13,6 +13,7 @@ pub const Method = enum {
     delete,
     options,
     query,
+    trace,
 };
 
 /// One borrowed request or response header field.

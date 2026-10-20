@@ -214,6 +214,7 @@ test "framework: OpenAPI reflects routes and path parameters" {
     var router = try support.radix.Router.init(bundle.storage());
     try router.get("/users/:id", handler);
     try router.post("/users", handler);
+    try router.trace("/probe", handler);
     try router.ws("/events", .{});
 
     var buffer: [4096]u8 = undefined;
@@ -221,6 +222,7 @@ test "framework: OpenAPI reflects routes and path parameters" {
     try std.testing.expect(std.mem.indexOf(u8, document, "\"openapi\":\"3.1.0\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, document, "\"/users/{id}\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, document, "\"post\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, document, "\"trace\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, document, "\"x-websocket\":true") != null);
 }
 

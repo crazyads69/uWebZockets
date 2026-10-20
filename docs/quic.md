@@ -29,6 +29,11 @@ bodies come from startup-allocated contiguous pools.
   requests never reach a handler. Pure early-data policy helpers remain
   available for a future backend that exposes per-request early-data state.
 - Congestion control is pinned to BBRv1 with per-connection pacing.
+- Linux transmit batching coalesces equal-sized packets for one destination into
+  one `sendmsg` with `UDP_SEGMENT` (GSO). Mixed sizes and other platforms use the
+  per-packet path. Receive-side `UDP_GRO` is disabled because the event loop does
+  not expose ancillary segment boundaries; a coalesced buffer would be misread as
+  one QUIC datagram.
 - The engine enforces decoded header limits, request bodies, packet buffers,
   connections, and active streams through `ServerConfig`.
 - Request validation is strict: pseudo-fields must precede regular fields and
@@ -47,6 +52,10 @@ advance the counter registry in this release.
 Both routing APIs support the `QUERY` method. It rejects a missing or
 syntactically invalid `Content-Type`; resource-specific media-type and content
 consistency remain the handler's policy.
+
+`TRACE` is also first-class and opt-in: `:method: TRACE` reaches a registered
+handler, but the library never synthesizes an echo route. `method_is_replay_safe`
+classifies TRACE as safe for early-data forwarding policy.
 
 ## Extended CONNECT, WebTransport, and datagrams
 

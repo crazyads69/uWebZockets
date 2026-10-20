@@ -127,6 +127,64 @@ test "affinity: physical cores are discoverable and pinning is best effort" {
     }
 }
 
+test "cluster: runtime worker count stays inside compiled capacity" {
+    const TestApp = support.app.configured_app_with_timeout(4, 1024, 4096, 0);
+    const test_config = support.config.ServerConfig{
+        .max_connections = 4,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .max_route_nodes = 8,
+        .max_pattern_routes = 4,
+        .max_middleware = 2,
+    };
+    var group = try TestApp.cluster(4).init_with_worker_count(
+        std.testing.allocator,
+        std.testing.io,
+        test_config,
+        .{ .cpu_affinity = false },
+        2,
+    );
+    defer group.deinit();
+
+    try std.testing.expect(group.worker(0) != null);
+    try std.testing.expect(group.worker(1) != null);
+    try std.testing.expect(group.worker(2) == null);
+    try std.testing.expectEqual(@as(usize, 2), group.workers.len);
+    try std.testing.expectEqual(@as(usize, 2), group.inboxes.len);
+
+    try std.testing.expectEqual(@as(usize, 6), try support.cluster.parse_worker_count("6", 8));
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        support.cluster.parse_worker_count("0", 8),
+    );
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        support.cluster.parse_worker_count("9", 8),
+    );
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        support.cluster.parse_worker_count("many", 8),
+    );
+    try std.testing.expect(support.cluster.default_worker_count() > 0);
+
+    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ.deinit();
+    try environ.put("UWEBZOCKETS_WORKERS", "3");
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        try support.cluster.worker_count_from_environment(&environ, 8),
+    );
+
+    var overflow = std.process.Environ.Map.init(std.testing.allocator);
+    defer overflow.deinit();
+    try overflow.put("UWEBZOCKETS_WORKERS", "9");
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        support.cluster.worker_count_from_environment(&overflow, 8),
+    );
+}
+
 test "cluster: request_shutdown after deinit is a documented no-op" {
     const TestApp = support.app.configured_app_with_timeout(1, 1024, 4096, 0);
     var group = try TestApp.cluster(1).init(std.testing.allocator, std.testing.io);

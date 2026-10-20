@@ -95,7 +95,8 @@ pub fn main(init: std.process.Init) !void {
 The same module carries the rest of the battery: `app.ws(...)` for WebSocket,
 `app.rpc(...)` for JSON-RPC, `app.static(...)` for assets,
 `build_cluster` for thread-per-core workers, `init_https_ephemeral` for HTTPS
-with no certificate files, and `listen_udp` plus `init_http3` for HTTP/3.
+with no certificate files, `listen_all` for a deterministic multi-port startup
+barrier, and `listen_udp` plus `init_http3` for HTTP/3.
 `zig build lib` also installs
 `zig-out/include/uWebZockets.h` for C and C++ consumers.
 
@@ -109,7 +110,10 @@ dependencies, archive linking, and the C ABI contract.
 
 `App.cluster(worker_count)` gives every worker its own loop, connection pool,
 request buffers, message regions, and queues. There is no shared I/O ring and
-no lock on the steady-state path.
+no lock on the steady-state path. `worker_count` is the compiled capacity;
+`build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the platform
+CPU count, and `ClusterOptions.worker_count` selects an explicit count. Only
+active workers allocate memory or threads.
 
 ```zig
 const std = @import("std");
@@ -180,7 +184,8 @@ pub fn main(init: std.process.Init) !void {
 ```
 
 `zig build tls_cluster -Doptimize=ReleaseSafe` starts the equivalent example
-with four workers and per-worker ephemeral certificates on
+with the platform CPU count by default (override with
+`UWEBZOCKETS_WORKERS`) and per-worker ephemeral certificates on
 `https://127.0.0.1:8443/`. [docs/tls.md](docs/tls.md#tls-enabled-clusters)
 covers ownership, lifecycle, and error names.
 
@@ -253,6 +258,10 @@ dynamic `std.json.Value` payloads, `Response.begin_json()` returns a streaming
 chunk writer for arbitrarily large JSON without allocation, and
 `Response.begin_stream()` pulls a chunked body from an application callback as
 the transport drains, so response size never depends on the write-queue size.
+`Response.end_gzip` compresses from a per-worker codec pool enabled with
+`with_http_compression(true)`; the codec and bounded scratch are allocated at
+startup, never on a request. Pipelined HTTP/1.1 responses and consecutive
+WebSocket frames coalesce into the bounded write ring before one flush.
 `errors.Problem` renders typed JSON error documents, `status.line` maps codes
 to canonical status lines, `cache.etag` and `cache.is_not_modified` implement
 conditional GET, `schema` validates decoded JSON against comptime rules, and
@@ -295,7 +304,7 @@ normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.9.0  ready in
+summary before the first accepting listener: `µWebZockets v2.0.0  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
@@ -413,7 +422,7 @@ timeouts, capacities, and failure kinds, is in
 | `zig build hello_world` | Minimal HTTP/1.1 route on `App` |
 | `zig build https_server` | HTTPS on port 3443 with an in-memory certificate |
 | `zig build shared_nothing_cluster` | Four pinned workers, one slab each |
-| `zig build tls_cluster` | Four TLS workers on port 8443 with per-worker certificates |
+| `zig build tls_cluster` | Runtime-selected TLS workers (CPU count by default) on port 8443 with per-worker certificates |
 | `zig build basic_microservice` | `Presets.microservice` with JSON helpers |
 | `zig build custom_builder` | Fluent overrides and the 50 MiB body path |
 | `zig build chat_server` | WebSocket pub/sub with bounded topics |

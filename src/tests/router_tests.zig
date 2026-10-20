@@ -139,7 +139,40 @@ test "router: RFC 10008 QUERY is routed as a safe body-bearing method" {
     try std.testing.expectEqualStrings("QUERY", allow);
 }
 
-test "router: ANY advertises every concrete method including QUERY" {
+test "router: TRACE is a first-class opt-in method" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.trace("/probe", dummy_handler);
+    try router.trace("/users/:id/probe", dummy_handler);
+
+    try std.testing.expectEqual(radix.HttpMethod.trace, radix.HttpMethod.parse("TRACE").?);
+    try std.testing.expectEqualStrings("TRACE", radix.HttpMethod.trace.name());
+    try std.testing.expect(radix.HttpMethod.early_data_safe(.trace));
+    try std.testing.expect(!radix.HttpMethod.early_data_safe(.post));
+    try std.testing.expect(!radix.HttpMethod.early_data_safe(.query));
+
+    try std.testing.expect(router.match("/probe", .trace).?.http_handler != null);
+    var request = Request{ .path = "/users/42/probe" };
+    try std.testing.expect(router.match_request(&request, .trace).?.http_handler != null);
+    try std.testing.expectEqualStrings("42", request.get_param("id").?);
+
+    const get_only = router.match("/probe", .get).?;
+    var allow_buffer: [96]u8 = undefined;
+    const allow = try radix.format_allowed_methods(get_only.allowed_methods, &allow_buffer);
+    try std.testing.expectEqualStrings("TRACE", allow);
+}
+
+test "router: App.trace registers an opt-in TRACE route" {
+    const TestApp = app.app(1);
+    var server = try TestApp.init(std.testing.io);
+    defer server.deinit();
+
+    _ = try server.trace("/probe", dummy_handler);
+    try std.testing.expect(server.router.match("/probe", .trace).?.http_handler != null);
+    try std.testing.expect(server.router.match("/probe", .get).?.http_handler == null);
+}
+
+test "router: ANY advertises every concrete method including TRACE and QUERY" {
     var bundle = radix.DefaultBundle{};
     var router = try radix.Router.init(bundle.storage());
     try router.any("/resource", dummy_handler);
@@ -148,7 +181,7 @@ test "router: ANY advertises every concrete method including QUERY" {
     var allow_buffer: [96]u8 = undefined;
     const allow = try radix.format_allowed_methods(match.allowed_methods, &allow_buffer);
     try std.testing.expectEqualStrings(
-        "GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS, QUERY",
+        "GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS, TRACE, QUERY",
         allow,
     );
 }
@@ -405,7 +438,7 @@ test "router: queued write closed before submission releases the slot" {
     var context = QueuedCloseContext{ .payload = "queued before close" };
     _ = try server.route_context(.get, "/queued-close", &context, queued_close_handler);
     try server.listen("127.0.0.1", 0);
-    const port = try support.tcp.listener_port(&server.server.?);
+    const port = try support.tcp.listener_port(&server.listeners[0]);
 
     const Runner = struct {
         application: *TestApp,
@@ -434,6 +467,89 @@ test "router: queued write closed before submission releases the slot" {
 
     try std.testing.expect(runner.error_code == null);
     try std.testing.expectEqual(@as(usize, 0), server.pool.count_active());
+}
+
+test "router: listen_all binds every endpoint before accepting" {
+    const TestApp = app.configured_app_with_timeout(2, 1024, 4096, 0);
+    var server = try TestApp.init(std.testing.io);
+    defer server.deinit();
+
+    _ = try server.get("/", dummy_handler);
+    try server.listen_all(&.{
+        .{ .address = "127.0.0.1", .port = 0 },
+        .{ .address = "127.0.0.1", .port = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 2), server.listener_count);
+    const first_port = try support.tcp.listener_port(&server.listeners[0]);
+    const second_port = try support.tcp.listener_port(&server.listeners[1]);
+
+    const Runner = struct {
+        application: *TestApp,
+        error_code: ?anyerror = null,
+
+        fn run(self: *@This()) void {
+            self.application.run() catch |err| {
+                self.error_code = err;
+            };
+        }
+    };
+
+    var runner = Runner{ .application = &server };
+    const thread = try std.Thread.spawn(.{}, Runner.run, .{&runner});
+
+    inline for (.{ first_port, second_port }) |port| {
+        var storage = support.client.FetchStorage{};
+        const outcome = try support.client.fetch_blocking(
+            std.testing.io,
+            .{ .method = .get, .host = "127.0.0.1", .path = "/" },
+            .{ .port = port, .read_timeout_ms = 2_000 },
+            &storage,
+        );
+        switch (outcome) {
+            .response => {},
+            .failure => return error.TestUnexpectedResult,
+        }
+    }
+
+    server.request_shutdown();
+    thread.join();
+    try std.testing.expect(runner.error_code == null);
+}
+
+test "router: listen_all rejects a listener set above capacity" {
+    const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 0);
+    var server = try TestApp.init(std.testing.io);
+    defer server.deinit();
+
+    const too_many = [_]app.TcpListenEndpoint{.{ .address = "127.0.0.1", .port = 0 }} ** (app.max_tcp_listeners + 1);
+    try std.testing.expectError(error.ListenerCapacityReached, server.listen_all(&too_many));
+    try std.testing.expectEqual(@as(usize, 0), server.listener_count);
+}
+
+test "router: listen_all supports per-listener TLS selection" {
+    const TestApp = app.configured_app_with_timeout(2, 1024, 4096, 0);
+    var server = try TestApp.init_https_ephemeral(std.testing.io);
+    defer server.deinit();
+
+    try server.listen_all(&.{
+        .{ .address = "127.0.0.1", .port = 0, .tls = false },
+        .{ .address = "127.0.0.1", .port = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 2), server.listener_count);
+    try std.testing.expect(!server.bindings[0].tls);
+    try std.testing.expect(server.bindings[1].tls);
+}
+
+test "router: listen_all rejects TLS without a context" {
+    const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 0);
+    var server = try TestApp.init(std.testing.io);
+    defer server.deinit();
+
+    try std.testing.expectError(
+        error.TlsNotInitialized,
+        server.listen_all(&.{.{ .address = "127.0.0.1", .port = 0, .tls = true }}),
+    );
+    try std.testing.expectEqual(@as(usize, 0), server.listener_count);
 }
 
 test "router: request_shutdown wakes a foreign-thread run" {
@@ -518,7 +634,7 @@ test "router: failed metrics install leaves no listener resources" {
 
     // The failed install must not strand the listener or sweeper timer.
     try std.testing.expectEqual(before, after);
-    try std.testing.expect(server.server == null);
+    try std.testing.expect(server.listener_count == 0);
     try std.testing.expect(server.sweeper == null);
     try std.testing.expect(!server.routes_locked);
 }
@@ -976,7 +1092,7 @@ test "router: carve_storage honors alignment and storage_bytes" {
     const method_slots = @typeInfo(radix.HttpMethod).@"enum".fields.len;
     for (cases) |capacities| {
         const bytes = try capacities.storage_bytes();
-        var backing: [68 * 1024]u8 align(@alignOf(radix.Storage)) = undefined;
+        var backing: [72 * 1024]u8 align(@alignOf(radix.Storage)) = undefined;
         try std.testing.expect(bytes + 16 <= backing.len);
 
         // Carving starts at an odd base; carve_storage pads to alignment.

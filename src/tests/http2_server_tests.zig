@@ -1687,6 +1687,51 @@ test "http2 server: extended CONNECT with :protocol websocket dispatches to hand
     try std.testing.expectEqualStrings("CONNECT", session.requests[0].method);
 }
 
+test "http2 server: TRACE reaches the registered handler" {
+    const Capture = struct {
+        method: [8]u8 = undefined,
+        method_len: usize = 0,
+        path: [32]u8 = undefined,
+        path_len: usize = 0,
+
+        fn handle(context: *anyopaque, request: *Request, response: *Response) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.method_len = @min(request.method.len, self.method.len);
+            @memcpy(self.method[0..self.method_len], request.method[0..self.method_len]);
+            self.path_len = @min(request.path.len, self.path.len);
+            @memcpy(self.path[0..self.path_len], request.path[0..self.path_len]);
+            response.end("200 OK", "ok") catch {};
+        }
+    };
+
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = TestState{ .session = &session };
+    state.init_router();
+    var capture = Capture{};
+    try state.router.route_context(.trace, "/probe", &capture, Capture.handle);
+
+    var block: [160]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "TRACE");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/probe");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+
+    var input: [256]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, block[0..block_length]);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expect(!session.is_closed());
+    try std.testing.expectEqual(@as(usize, 1), state.dispatch_count);
+    try std.testing.expectEqualStrings("TRACE", capture.method[0..capture.method_len]);
+    try std.testing.expectEqualStrings("/probe", capture.path[0..capture.path_len]);
+}
+
 test "http2 server: extended CONNECT data requires an accepted tunnel" {
     var fixture: SessionFixture = .{};
     try fixture.init();

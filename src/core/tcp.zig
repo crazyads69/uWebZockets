@@ -20,6 +20,7 @@ const abort = @import("../http/abort.zig");
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const http2_server = @import("../http2/server.zig");
 const http_rejection = @import("../http/rejection.zig");
+const http_compression_pool = @import("../http/compression_pool.zig");
 const zero_copy = @import("zero_copy.zig");
 const tcp_file = @import("tcp_file.zig");
 const dev_log = @import("../observability/dev_log.zig");
@@ -93,7 +94,7 @@ pub const TcpConnection = struct {
 
     req: Request = .{},
     parser: HttpParser = .{},
-    ws: WebSocket = undefined,
+    ws: WebSocket = .{},
     h2: Http2Session = .{},
     h2_async_states: [max_http2_streams]http_response.AsyncResponseState =
         .{http_response.AsyncResponseState{}} ** max_http2_streams,
@@ -145,6 +146,9 @@ pub const TcpConnection = struct {
     suppress_response_body: bool = false,
     dispatch_suspended: bool = false,
     pending_close_requested: bool = false,
+    // Depth of the current read-dispatch write batch. Nested protocol entry
+    // points increment the counter; only the outermost decrement flushes.
+    write_batch_depth: u8 = 0,
 
     pending_request_consumed: usize = 0,
     protocol_probe_len: usize = 0,
@@ -156,6 +160,8 @@ pub const TcpConnection = struct {
     request_buffer: []u8 = &.{},
     tls_write_buffer: [8192]u8 = undefined,
     protocol_probe: [@import("../http2/connection.zig").client_preface.len]u8 = undefined,
+    /// Per-worker gzip pool borrowed from the owning application.
+    http_compression: ?*http_compression_pool.Pool = null,
     write_queue: []u8 = &.{},
     // Per-connection route-capture capacity slices, set once by the owning
     // application and reused by every request dispatched on this connection.
@@ -286,6 +292,9 @@ pub const TcpConnection = struct {
 
     fn drain_tls_plaintext(self: *TcpConnection, ssl: *c.SSL) void {
         var plain_buffer: [socket_read_capacity]u8 = undefined;
+        // Keep decrypted chunks inside one write batch until the BIO drains.
+        begin_write_batch(self);
+        defer end_write_batch(self);
         // A rejection or keep-alive drain already decided to close; do not keep
         // decrypting and dispatching buffered pipelined bytes after that point.
         while (!self.closing and !self.close_when_drained and !self.dispatch_suspended) {
@@ -315,7 +324,12 @@ pub const TcpConnection = struct {
             .detect => self.route_detect_data(data),
             .http => self.route_http_data(data),
             .http2 => self.route_http2_data(data),
-            .websocket => self.ws.on_data(data),
+            .websocket => {
+                // Consecutive echo frames from one read share one write.
+                begin_write_batch(self);
+                defer end_write_batch(self);
+                self.ws.on_data(data);
+            },
         }
     }
 
@@ -466,6 +480,7 @@ pub const TcpConnection = struct {
             .write_fn = write_http2_response,
             .finish_fn = finish_http2_response,
             .begin_stream_fn = begin_http2_stream,
+            .compression_pool = self.http_compression,
         } } };
         const method = radix.HttpMethod.parse(request.method);
         if (self.early_data_forbids(method)) {
@@ -715,6 +730,7 @@ pub const TcpConnection = struct {
                 .begin_fn = begin_http2_response,
                 .write_fn = write_http2_response,
                 .finish_fn = finish_http2_response,
+                .compression_pool = self.http_compression,
             } },
             .state = .streaming,
             .close_after_end = self.h2_stream_producer_close[index],
@@ -796,6 +812,15 @@ pub const TcpConnection = struct {
     }
 
     fn route_http_data(self: *TcpConnection, data: []const u8) void {
+        // The outer TLS drain may already own a batch. Otherwise begin one
+        // only when the parser proves another request follows, preserving the
+        // single-request direct-send fast path.
+        var batching = self.write_batch_depth != 0;
+        if (batching) begin_write_batch(self);
+        defer {
+            if (batching) end_write_batch(self);
+        }
+
         if (self.dispatch_suspended) {
             close_connection(self);
             return;
@@ -839,6 +864,10 @@ pub const TcpConnection = struct {
             }
 
             const close_requested = self.req.header_has_token("Connection", "close");
+            if (!batching and consumed < self.request_len) {
+                begin_write_batch(self);
+                batching = true;
+            }
             self.dispatch_request();
             if (self.closing or self.close_when_drained) return;
             if (self.dispatch_suspended) {
@@ -1253,6 +1282,12 @@ pub const TcpConnection = struct {
         if (overhead > self.write_queue.len - plain_len) return error.WouldBlock;
         const required = plain_len + overhead;
         if (pending > self.write_queue.len - required) return error.WouldBlock;
+        if (self.write_batch_depth != 0 and
+            required + pending > self.write_queue.len - self.write_len)
+        {
+            tcp_file.flush_batched(self);
+            if (self.closing) return error.ConnectionClosed;
+        }
         if (required + pending > self.write_queue.len - self.write_len) return error.WouldBlock;
 
         for (parts) |part| {
@@ -1289,6 +1324,15 @@ pub const TcpConnection = struct {
     }
 
     pub fn start_write(self: *TcpConnection) void {
+        if (self.write_batch_depth != 0) return;
+        self.arm_write();
+    }
+
+    /// Arms the current ring without consulting the batch depth.
+    ///
+    /// Only the batch flusher uses this on the fallback path after a partial
+    /// direct send, so the completion can drain the remainder.
+    pub fn arm_write(self: *TcpConnection) void {
         if (self.is_writing or self.write_len == 0 or self.closing) return;
 
         const contiguous_len = @min(self.write_len, self.write_queue.len - self.write_head);
@@ -1302,6 +1346,22 @@ pub const TcpConnection = struct {
             self,
             on_write_complete,
         );
+    }
+
+    /// Starts a write batch for one read completion.
+    ///
+    /// Pipelined HTTP/1 responses and consecutive WebSocket frames append to
+    /// the bounded send ring without arming a completion per frame; the
+    /// outermost `end_write_batch` flushes them with one socket write.
+    pub fn begin_write_batch(conn: *TcpConnection) void {
+        if (conn.write_batch_depth != std.math.maxInt(u8)) conn.write_batch_depth += 1;
+    }
+
+    /// Ends one write batch and flushes when no enclosing batch remains.
+    pub fn end_write_batch(conn: *TcpConnection) void {
+        if (conn.write_batch_depth == 0) return;
+        conn.write_batch_depth -= 1;
+        if (conn.write_batch_depth == 0) tcp_file.flush_batched(conn);
     }
 
     /// Copies one plaintext slice into the bounded transport write path.
@@ -1367,10 +1427,7 @@ pub const TcpConnection = struct {
         const ssl = self.ssl orelse return false;
         if (c.SSL_in_early_data(ssl) == 0) return false;
         const parsed = method orelse return true;
-        return switch (parsed) {
-            .get, .head, .options => false,
-            else => true,
-        };
+        return !radix.HttpMethod.early_data_safe(parsed);
     }
 
     /// Returns encrypted or plaintext bytes queued for the socket.
@@ -1620,6 +1677,7 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.dispatch_suspended = false;
     conn.pending_request_consumed = 0;
     conn.pending_close_requested = false;
+    conn.write_batch_depth = 0;
     conn.clear_stream();
     conn.protocol_probe_len = 0;
     conn.async_response_state.cancel();
@@ -1770,6 +1828,7 @@ pub fn release_closed_connection(conn: *TcpConnection) void {
     conn.dispatch_suspended = false;
     conn.pending_request_consumed = 0;
     conn.pending_close_requested = false;
+    conn.write_batch_depth = 0;
     conn.on_close_cb = null;
     conn.pool_ptr = null;
     callback(pool, conn);
@@ -1888,28 +1947,38 @@ const winsock_getsockname = @extern(WinsockGetsocknameFn, .{
 /// `std.posix.system` exposes no sockname entry point with a usable Windows
 /// descriptor, so the winsock symbol is bound here like the other options.
 pub fn listener_port(server: *const TcpServer) !u16 {
+    var storage: std.posix.sockaddr.storage = undefined;
+    var length: if (builtin.os.tag == .windows) c_int else std.posix.socklen_t =
+        @sizeOf(std.posix.sockaddr.storage);
     if (builtin.os.tag == .windows) {
-        var address: std.os.windows.ws2_32.sockaddr.in = undefined;
-        var length: c_int = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
         if (winsock_getsockname(
             @intFromPtr(xev.tcp_fd(server.listener)),
-            @ptrCast(&address),
+            @ptrCast(&storage),
             &length,
         ) != 0) return error.ListenerAddressUnavailable;
-        return std.mem.bigToNative(u16, address.port);
+    } else {
+        switch (std.posix.errno(std.posix.system.getsockname(
+            xev.tcp_fd(server.listener),
+            @ptrCast(&storage),
+            &length,
+        ))) {
+            .SUCCESS => {},
+            else => return error.ListenerAddressUnavailable,
+        }
     }
 
-    var address: std.posix.sockaddr.in = undefined;
-    var length: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.in);
-    switch (std.posix.errno(std.posix.system.getsockname(
-        xev.tcp_fd(server.listener),
-        @ptrCast(&address),
-        &length,
-    ))) {
-        .SUCCESS => {},
-        else => return error.ListenerAddressUnavailable,
-    }
-    return std.mem.bigToNative(u16, address.port);
+    const family: *const std.posix.sockaddr = @ptrCast(&storage);
+    return switch (family.family) {
+        std.posix.AF.INET => std.mem.bigToNative(
+            u16,
+            @as(*const std.posix.sockaddr.in, @ptrCast(&storage)).port,
+        ),
+        std.posix.AF.INET6 => std.mem.bigToNative(
+            u16,
+            @as(*const std.posix.sockaddr.in6, @ptrCast(&storage)).port,
+        ),
+        else => error.ListenerAddressUnavailable,
+    };
 }
 
 /// Bounds one blocking receive so a stalled peer fails a read instead of

@@ -76,6 +76,12 @@ so the key is neither required nor inspected.
 Per-message deflate is negotiated on HTTP/1.1 upgrades only; RFC 8441 tunnels
 carry uncompressed frames. See [http2.md](http2.md).
 
+Consecutive client frames delivered by one read completion are unmasked and
+echoed into the bounded write ring before a single flush. Masking uses the widest
+compiled vector (128-bit SSE2/NEON, 256-bit AVX2) with a scalar tail, including
+correct key rotation across fragmented payloads. Frame, control, and close
+ordering is unchanged; HTTP/2 tunnel sends bypass the TCP ring.
+
 ## Compliance
 
 The bundled Autobahn runner executes all 517 selected server cases. The verified

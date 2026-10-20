@@ -154,6 +154,11 @@ The supported order is `build_cluster` -> `configure` -> `enable_https` (or
 shutdown signal -> `deinit`. TLS setup is startup work: `listen` locks routes
 and starts accepting, so the enable call must not move after it.
 
+The `4` passed to `build_cluster` is the compiled capacity. Use
+`build_cluster_from_environment` to resolve `UWEBZOCKETS_WORKERS` or default to
+the platform CPU count; `ClusterOptions.worker_count` selects an explicit
+smaller count. Only active workers create TLS contexts, slabs, and threads.
+
 Each worker creates and owns one BoringSSL `SSL_CTX` at enable time, before
 any listener exists; every accepted connection creates its own `SSL` from its
 worker's context. No credential, session-cache, handshake, or ticket state is
@@ -167,7 +172,8 @@ and accepted for the target HTTP workload. Both decisions are recorded in
 
 The context keeps the single-application HTTPS policy: TLS 1.3 only, ALPN `h2`
 then `http/1.1`, and safe-method 0-RTT with non-safe early data answered `425
-Too Early`. Cluster TLS covers HTTP/1.1 and HTTP/2 over TCP. `enable_https`
+Too Early`. `TRACE` joins `GET`, `HEAD`, and `OPTIONS` as a safe early-data
+method; `QUERY` remains replay-unsafe. Cluster TLS covers HTTP/1.1 and HTTP/2 over TCP. `enable_https`
 does not configure client certificates; use single-application
 `init_https_mtls` when mTLS is required.
 

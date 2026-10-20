@@ -71,5 +71,6 @@ pub const ws_stream = @import("ws/stream.zig");
 
 pub const abort = @import("http/abort.zig");
 pub const compression_stream = @import("http/compression_stream.zig");
+pub const compression_pool = @import("http/compression_pool.zig");
 pub const crypto_subtle = @import("crypto/subtle.zig");
 pub const shared_memory = @import("ffi/shared_memory.zig");

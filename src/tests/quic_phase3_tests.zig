@@ -110,6 +110,7 @@ test "phase3: early data policy defers and rejects replay-unsafe forwarding" {
     );
     try std.testing.expect(extensions.method_is_replay_safe("GET"));
     try std.testing.expect(extensions.method_is_replay_safe("QUERY"));
+    try std.testing.expect(extensions.method_is_replay_safe("TRACE"));
     try std.testing.expect(!extensions.method_is_replay_safe("CONNECT"));
 }
 

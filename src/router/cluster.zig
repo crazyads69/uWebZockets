@@ -3,6 +3,42 @@ const max_topic_length = @import("../ws/pubsub.zig").max_topic_length;
 
 pub const queue_capacity = 64;
 
+/// Environment variable that overrides the active worker count at startup.
+pub const workers_environment_variable = "UWEBZOCKETS_WORKERS";
+/// Compile-time capacity used by the unbounded runtime worker dispatcher.
+///
+/// The active count is selected at startup; capacity only bounds the fixed
+/// worker/inbox/thread arrays. It matches `CoreSelection`'s tracked CPU bound,
+/// so no supported machine is truncated by a smaller project-defined cap.
+pub const default_worker_capacity = 256;
+
+/// Returns the platform CPU count as the default worker count.
+pub fn default_worker_count() usize {
+    return std.Thread.getCpuCount() catch 1;
+}
+
+/// Parses a positive worker count and validates it against `capacity`.
+pub fn parse_worker_count(value: []const u8, capacity: usize) !usize {
+    if (capacity == 0) return error.InvalidWorkerCount;
+    const count = std.fmt.parseInt(usize, value, 10) catch return error.InvalidWorkerCount;
+    if (count == 0 or count > capacity) return error.InvalidWorkerCount;
+    return count;
+}
+
+/// Resolves the active worker count from the environment, or the CPU count.
+///
+/// This is a startup boundary: environment access is explicit, bounded, and
+/// never performed on a request path.
+pub fn worker_count_from_environment(
+    environ: *const std.process.Environ.Map,
+    capacity: usize,
+) !usize {
+    if (capacity == 0) return error.InvalidWorkerCount;
+    const raw = environ.get(workers_environment_variable) orelse
+        return @min(default_worker_count(), capacity);
+    return parse_worker_count(raw, capacity);
+}
+
 pub const Message = struct {
     topic: []const u8,
     payload: []const u8,

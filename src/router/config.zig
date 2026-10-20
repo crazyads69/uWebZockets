@@ -150,6 +150,8 @@ pub const ServerConfig = struct {
     idle_timeout_ms: u64 = 120_000,
     /// Reserves per-connection RFC 7692 scratch inside the startup slab.
     compression: bool = false,
+    /// Reserves one per-worker gzip codec for `Response.end_gzip`.
+    http_compression: bool = false,
     /// Requested transport backend; see `TransportMode`.
     transport: TransportMode = .standard,
     /// Largest single WebTransport datagram payload; zero disables datagrams.
@@ -225,6 +227,8 @@ pub const ServerConfig = struct {
         idle_timeout_ms: ?u64 = null,
         /// Replaces `compression` when non-null.
         compression: ?bool = null,
+        /// Replaces `http_compression` when non-null.
+        http_compression: ?bool = null,
         /// Replaces `transport` when non-null.
         transport: ?TransportMode = null,
         /// Replaces `max_datagram_size` when non-null.
@@ -270,6 +274,7 @@ pub const ServerConfig = struct {
         if (overrides.max_h3_response_header_count) |value| result.max_h3_response_header_count = value;
         if (overrides.idle_timeout_ms) |value| result.idle_timeout_ms = value;
         if (overrides.compression) |value| result.compression = value;
+        if (overrides.http_compression) |value| result.http_compression = value;
         if (overrides.transport) |value| result.transport = value;
         if (overrides.max_datagram_size) |value| result.max_datagram_size = value;
         if (overrides.datagram_slots) |value| result.datagram_slots = value;

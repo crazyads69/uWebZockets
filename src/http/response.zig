@@ -5,6 +5,7 @@ const streams = @import("streams.zig");
 const cookie_module = @import("cookie.zig");
 const http_status = @import("status.zig");
 const dev_log = @import("../observability/dev_log.zig");
+const CompressionPool = @import("compression_pool.zig").Pool;
 const TcpConnection = tcp.TcpConnection;
 
 /// HTTP/3 end callback: status, response fields, and body bytes.
@@ -91,6 +92,8 @@ pub const Http2Target = struct {
     finish_fn: Http2FinishFn,
     /// Optional drain-driven producer arming; null reports unsupported.
     begin_stream_fn: ?Http2StreamBeginFn = null,
+    /// Optional per-worker gzip pool for `Response.end_gzip`.
+    compression_pool: ?*CompressionPool = null,
 };
 
 /// Active transport receiving response bytes.
@@ -282,6 +285,43 @@ pub const Response = struct {
             },
         }
         self.state = .ended;
+    }
+
+    /// Sends a gzip-compressed response from the per-worker codec pool.
+    ///
+    /// The pool must be enabled with `with_http_compression(true)`. HTTP/1 and
+    /// HTTP/2 use the borrowed worker pool; HTTP/3 reports unsupported until a
+    /// pool is threaded through the QUIC stream context.
+    pub fn end_gzip(
+        self: *Response,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) !void {
+        if (self.state != .idle) return error.ResponseAlreadyStarted;
+        const code = status_code(status) orelse return error.InvalidStatus;
+        if (!valid_headers(headers)) return error.InvalidHeaders;
+        if (headers_have_field(headers, "Content-Encoding") or
+            headers_have_field(self.pending_headers[0..self.pending_header_length], "Content-Encoding"))
+        {
+            return error.DuplicateContentEncoding;
+        }
+        if (status_forbids_body(code)) return self.end_with_headers(status, headers, "");
+
+        const pool = switch (self.target) {
+            .tcp => |conn| conn.http_compression,
+            .http2 => |target| target.compression_pool,
+            .http3 => return error.CompressionUnsupported,
+        } orelse return error.CompressionUnavailable;
+
+        const compressed = try pool.gzip(body);
+        var merged_buffer: [pending_header_capacity]u8 = undefined;
+        const merged = std.fmt.bufPrint(
+            &merged_buffer,
+            "Content-Encoding: gzip\r\nVary: Accept-Encoding\r\n{s}",
+            .{headers},
+        ) catch return error.HeadersTooLarge;
+        return self.end_with_headers(status, merged, compressed);
     }
 
     /// Streams an opened regular file as the response body at the kernel boundary.
@@ -813,6 +853,16 @@ pub fn valid_headers(headers: []const u8) bool {
         }
     }
     return true;
+}
+
+/// Finds one case-insensitive field name in raw response fields.
+pub fn headers_have_field(headers: []const u8, name: []const u8) bool {
+    var lines = std.mem.splitSequence(u8, headers, "\r\n");
+    while (lines.next()) |line| {
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        if (std.ascii.eqlIgnoreCase(line[0..colon], name)) return true;
+    }
+    return false;
 }
 
 /// Finds a case-insensitive token in comma-delimited raw response fields.

@@ -9,7 +9,9 @@
 //!   UWZ_MODE          tls-cluster (default), plaintext-cluster, or tls-single
 //!   UWZ_TLS_BIND      listen address (default 0.0.0.0)
 //!   UWZ_TLS_PORT      listen port (default 8443)
-//!   UWZ_WORKERS       worker count: 1, 2, 4, or 8 (default 4)
+//!   UWZ_WORKERS       active worker count (default: platform CPU count;
+//!                     UWEBZOCKETS_WORKERS is the canonical spelling and
+//!                     UWZ_WORKERS remains a compatibility alias)
 //!   UWZ_MAX_CLIENTS   connection capacity: 128, 1024, or 2048 (default 128)
 //!   UWZ_CPU_AFFINITY  1 to pin workers to physical cores, 0 to leave them
 //!                     unpinned for SMT benchmark hosts (default 1)
@@ -38,7 +40,8 @@ const Options = struct {
     mode: Mode = .tls_cluster,
     bind: []const u8 = "0.0.0.0",
     port: u16 = 8443,
-    workers: usize = 4,
+    /// Zero selects the CPU-count default or `UWEBZOCKETS_WORKERS`.
+    workers: usize = 0,
     max_clients: usize = 128,
     cpu_affinity: bool = true,
     certificate: ?[]const u8 = null,
@@ -70,7 +73,11 @@ fn read_options(environ: *const std.process.Environ.Map) !Options {
     if (environ.get("UWZ_TLS_PORT")) |value| {
         options.port = std.fmt.parseInt(u16, value, 10) catch return error.InvalidEnvironmentValue;
     }
-    if (try parse_env_usize(environ, "UWZ_WORKERS")) |workers| options.workers = workers;
+    if (try parse_env_usize(environ, uz.cluster.workers_environment_variable)) |workers| {
+        options.workers = workers;
+    } else if (try parse_env_usize(environ, "UWZ_WORKERS")) |workers| {
+        options.workers = workers;
+    }
     if (try parse_env_usize(environ, "UWZ_MAX_CLIENTS")) |clients| options.max_clients = clients;
     if (environ.get("UWZ_CPU_AFFINITY")) |value| {
         if (std.mem.eql(u8, value, "1")) {
@@ -99,17 +106,21 @@ fn log_worker_metrics(worker_index: usize, registry: ?*uz.metrics.Registry) void
 }
 
 fn serve_cluster(
-    comptime workers: usize,
+    comptime worker_capacity: usize,
     comptime max_clients: usize,
+    workers: usize,
     init: std.process.Init,
     options: Options,
 ) !void {
     var group = try uz.Server.builder(init.io)
         .with_max_clients(max_clients)
         .with_observability(true)
-        .build_cluster(std.heap.page_allocator, workers, .{
-        .cpu_affinity = options.cpu_affinity,
-    });
+        .build_cluster_with_worker_count(
+        std.heap.page_allocator,
+        worker_capacity,
+        workers,
+        .{ .cpu_affinity = options.cpu_affinity },
+    );
     defer group.deinit();
 
     const Cluster = @TypeOf(group);
@@ -167,40 +178,42 @@ fn serve_single(
 }
 
 fn dispatch_clients(
-    comptime workers: usize,
+    comptime worker_capacity: usize,
     init: std.process.Init,
     options: Options,
 ) !void {
     switch (options.max_clients) {
-        128 => try dispatch_mode(workers, 128, init, options),
-        256 => try dispatch_mode(workers, 256, init, options),
-        512 => try dispatch_mode(workers, 512, init, options),
-        1024 => try dispatch_mode(workers, 1024, init, options),
-        2048 => try dispatch_mode(workers, 2048, init, options),
+        128 => try dispatch_mode(worker_capacity, 128, init, options),
+        256 => try dispatch_mode(worker_capacity, 256, init, options),
+        512 => try dispatch_mode(worker_capacity, 512, init, options),
+        1024 => try dispatch_mode(worker_capacity, 1024, init, options),
+        2048 => try dispatch_mode(worker_capacity, 2048, init, options),
         else => return error.UnsupportedMaxClients,
     }
 }
 
 fn dispatch_mode(
-    comptime workers: usize,
+    comptime worker_capacity: usize,
     comptime max_clients: usize,
     init: std.process.Init,
     options: Options,
 ) !void {
+    const workers = if (options.workers != 0)
+        options.workers
+    else if (options.mode == .tls_single)
+        1
+    else
+        try uz.cluster.worker_count_from_environment(init.environ_map, worker_capacity);
+    if (workers == 0 or workers > worker_capacity) return error.InvalidWorkerCount;
+
     if (options.mode == .tls_single) {
         if (workers != 1) return error.SingleModeRequiresOneWorker;
         return serve_single(max_clients, init, options);
     }
-    return serve_cluster(workers, max_clients, init, options);
+    return serve_cluster(worker_capacity, max_clients, workers, init, options);
 }
 
 pub fn main(init: std.process.Init) !void {
     const options = try read_options(init.environ_map);
-    switch (options.workers) {
-        1 => try dispatch_clients(1, init, options),
-        2 => try dispatch_clients(2, init, options),
-        4 => try dispatch_clients(4, init, options),
-        8 => try dispatch_clients(8, init, options),
-        else => return error.UnsupportedWorkerCount,
-    }
+    try dispatch_clients(uz.cluster.default_worker_capacity, init, options);
 }

@@ -130,6 +130,22 @@ test "ws: SIMD mask preserves key position across chunks" {
     try std.testing.expectEqualSlices(u8, &whole, &split);
 }
 
+test "ws: SIMD mask matches scalar across tails and key rotations" {
+    const key = [_]u8{ 0x11, 0x22, 0x33, 0x44 };
+    var simd: [96]u8 = undefined;
+    var scalar: [96]u8 = undefined;
+
+    for (1..simd.len + 1) |len| {
+        for (0..key.len) |position| {
+            for (0..len) |index| simd[index] = @intCast(index % 251);
+            scalar = simd;
+            mask.apply_simd(simd[0..len], key, position);
+            mask.apply_scalar(scalar[0..len], key, position);
+            try std.testing.expectEqualSlices(u8, scalar[0..len], simd[0..len]);
+        }
+    }
+}
+
 test "ws: masking position wraps across fragmented chunks" {
     const key = [_]u8{ 1, 2, 3, 4 };
     const position = std.math.maxInt(u64) - 2;
