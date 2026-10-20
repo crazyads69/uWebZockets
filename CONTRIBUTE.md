@@ -27,6 +27,30 @@ clangd users run `zig build clangd` after the first fetch. It writes a
 gitignored `compile_flags.txt` at the repository root with the resolved include
 roots for `src/c.h`, the lsquic shim, and the C ABI tests.
 
+## Coding agent integrations
+
+Codex and OpenCode use a repository-local Graphify integration. Install the CLI
+with MCP support and build the ignored graph before querying it:
+
+```sh
+uv tool install "graphifyy[mcp]"
+graphify extract . --code-only
+```
+
+Both assistants load the checked-in skills under `.codex/skills/graphify/` and
+`.opencode/skills/graphify/`. The MCP entries in `.codex/config.toml` and
+`.opencode/opencode.json` read `graphify-out/graph.json` relative to the
+workspace root, so start the assistant from the repository root. After
+upgrading the CLI, refresh both registrations:
+
+```sh
+graphify install --project --platform codex
+graphify install --project --platform opencode
+```
+
+Codex loads the project `.codex/` layer only for trusted projects. Trust the
+checkout once, then use `/hooks` to review the no-op Graphify hook.
+
 ## Engineering requirements
 
 - Do not allocate in request parsing, frame parsing, masking, routing, or

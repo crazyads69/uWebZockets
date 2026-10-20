@@ -6,8 +6,8 @@ description: Master high-performance workflow integrating all specialized skills
 # µWebZockets High-Performance Master Workflow
 
 This document outlines the unified workflow combining the specialized skills in
-`.agents/skills/*` with the global `graphify` skill to build a blazingly fast,
-zero-allocation WebSocket/HTTP library.
+`.agents/skills/*` with the repository-local `graphify` integration to build a
+blazingly fast, zero-allocation WebSocket/HTTP library.
 
 Route work by phase (`using-agent-skills`): load the narrowest skill set that
 fits the current step and never stack processes that do not apply.
@@ -68,8 +68,8 @@ fits the current step and never stack processes that do not apply.
 - **Automate (`ci-cd-and-automation`)**: workflows stay pinned, deterministic, and cache-correct; never weakened to pass.
 - **Ship (`shipping-and-launch`)**: releases follow the documented checklist, and rollback precedes announcement.
 
-## 9. Knowledge Graph (`graphify`, global plugin)
-- Ask the graph first: for architecture, file-relationship, or "how does X work" questions, query `graphify-out/graph.json` when it exists instead of re-scanning the tree.
+## 9. Knowledge Graph (`graphify`, Codex and OpenCode)
+- Ask the graph first: for architecture, file-relationship, or "how does X work" questions, use the `graphify` MCP tools or `graphify query` against `graphify-out/graph.json` instead of re-scanning the tree.
 - Rebuild only on explicit request (`/graphify`); never regenerate the graph as a side effect of a scoped code change.
 - `graphify-out/` is generated and git-ignored; do not commit it.
 - Treat graph answers as navigation hints and confirm behavior in the source.

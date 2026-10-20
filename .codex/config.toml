@@ -1,2 +1,8 @@
 [agents]
 max_concurrent_threads_per_session = 4
+
+[mcp_servers.graphify]
+command = "graphify-mcp"
+args = ["graphify-out/graph.json"]
+cwd = "."
+startup_timeout_sec = 20
