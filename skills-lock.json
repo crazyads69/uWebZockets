@@ -49,6 +49,12 @@
       "skillPath": "skills/code-simplification/SKILL.md",
       "computedHash": "7973e746e8e2ea5004d520da970c15a106824b8d6be1bcff48908aec021f3677"
     },
+    "codebase-design": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/codebase-design/SKILL.md",
+      "computedHash": "b2888e4f4e8c0af3bfd557575a64b905c44e6248c3101d72077816882b3a92b9"
+    },
     "constraint-driven-development": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",
@@ -103,6 +109,12 @@
       "skillPath": "dod/SKILL.md",
       "computedHash": "2746973a03ae09612ec1a5fe5f6160deac3de2beba11343e57fd442cd0e4a5bb"
     },
+    "domain-modeling": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/domain-modeling/SKILL.md",
+      "computedHash": "b3eb40152b81f0c98fd2095a023c019452dbdce56f7540cc67fece2972db8369"
+    },
     "doubt-driven-development": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",
@@ -121,17 +133,41 @@
       "skillPath": "skills/git-workflow-and-versioning/SKILL.md",
       "computedHash": "e8e0d1cc98c0a6b81d2979442ae92addae32cd5194fb5c4eac4ac5228b408770"
     },
+    "grill-me": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/grill-me/SKILL.md",
+      "computedHash": "9cdbb4b8f7a3aeaef82e6230c9e823500d4a8a1214c726cf342cf9829d34fc7d"
+    },
+    "grilling": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/grilling/SKILL.md",
+      "computedHash": "ef1641a2047b71b60f1942cd35efb47d3afc9d584dff5a0b01f8c7db923aaa08"
+    },
     "idea-refine": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/idea-refine/SKILL.md",
       "computedHash": "9fc0ae5d8a074872a636d22f9c6fe71e041b86cddc9fe5af90ef654f5032ec5d"
     },
+    "improve-codebase-architecture": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
+      "computedHash": "ac2c94885f34ff8492dc12aa4543182f661f32ea1722b8d6b6c2c7045af33ae3"
+    },
     "incremental-implementation": {
       "source": "addyosmani/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/incremental-implementation/SKILL.md",
       "computedHash": "bb1198705f46dc9ff75fb5685a7a872de5924d743b44eb202135f5046750ab7e"
+    },
+    "install-anti-slop": {
+      "source": "dmmulroy/anti-slop",
+      "sourceType": "github",
+      "skillPath": "skills/install-anti-slop/SKILL.md",
+      "computedHash": "1b9b5d3c0d9e0ef8dd7631f4d637e66b62a73e34dceaf4ae07c0d3de376fd7d7"
     },
     "interview-me": {
       "source": "addyosmani/agent-skills",
@@ -204,6 +240,13 @@
       "sourceType": "github",
       "skillPath": "skills/test-driven-development/SKILL.md",
       "computedHash": "efb654aa37612ab1e7470e547b06a322c5e1837b6879525e32aa432d1281692b"
+    },
+    "thermo-nuclear-code-quality-review": {
+      "source": "cursor/plugins",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "thermos/skills/thermo-nuclear-code-quality-review/SKILL.md",
+      "computedHash": "9052b01b46b1d8dbf94c45f9313ec1983443f9a460e83d49cdc7fe0f640ca476"
     },
     "using-agent-skills": {
       "source": "addyosmani/agent-skills",

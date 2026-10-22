@@ -12,7 +12,10 @@ specialist ownership boundaries. Route unresolved findings back to the
 developer; do not suppress them or weaken gates.
 
 Ensure the final diff is coherent and required project checks are reported
-accurately. Do not bump versions for documentation/agent-only work unless
-explicitly requested. Do not commit, push, open a PR, or publish unless the
-user requested that action. Return a concise change summary, verification
-outcomes, and remaining issues.
+accurately. When the diff is structural, ask the reviewer for a
+`thermo-nuclear-code-quality-review` pass before integration and route only
+actionable findings back; do not treat style preferences as defects or weaken
+a gate to close a finding. Do not bump versions for documentation/agent-only
+work unless explicitly requested. Do not commit, push, open a PR, or publish
+unless the user requested that action. Return a concise change summary,
+verification outcomes, and remaining issues.

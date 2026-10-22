@@ -58,8 +58,9 @@ Load skills on demand with the `skill` tool by directory name. Prefer the
 narrowest skill that matches the current phase; do not load skills that do not
 apply.
 - **Local project skills**: `.agents/skills/<name>/SKILL.md`, pinned by
-  `skills-lock.json`. If a referenced skill is missing, stop and report drift
-  instead of guessing.
+  `skills-lock.json`. Install transitive skill dependencies from the same
+  source and pin them too. If a referenced skill is missing, stop and report
+  drift instead of guessing.
 - **Graphify**: vendored for both assistants under `.opencode/skills/graphify/`
   and `.codex/skills/graphify/`. Refresh both copies with
   `graphify install --project --platform opencode` and
@@ -71,6 +72,17 @@ apply.
   `debugging-and-error-recovery` owns failures; `code-review-and-quality` and
   `doubt-driven-development` gate high-stakes diffs;
   `constraint-driven-development` guards the quality bar.
+- **Architecture**: `improve-codebase-architecture` scans for deep-module
+  opportunities and writes a throwaway HTML report; pair it with
+  `codebase-design` for the module vocabulary and `domain-modeling` when a
+  decision changes `GLOSSARY.md` or `docs/adr/`.
+- **Plan stress test**: `grill-me` routes to `grilling` for a relentless
+  design-tree interview. Use it when a plan is expensive or hard to reverse;
+  use `interview-me` to discover requirements and
+  `doubt-driven-development` to attack an implementation.
+- **Deep maintainability review**: `thermo-nuclear-code-quality-review` is an
+  on-demand second lens for structural diffs. It adds to, and never replaces,
+  `code-review-and-quality`, `CODING_CONVENTION.md`, or the project gates.
 - **Non-functional**: `security-and-hardening`, `performance-optimization`,
   `observability-and-instrumentation`, and `code-simplification`.
 - **Delivery**: `api-and-interface-design`, `source-driven-development`,
@@ -80,6 +92,32 @@ apply.
 - **Domain**: Zig and systems (`zig-*`, `gcc`, `c-systems-programming`,
   `nix-best-practices`) and design (`dod`, `ponytail`, `caveman`,
   `functional-programming-fundamentals`).
+- **JavaScript/TypeScript tooling**: `install-anti-slop` is scoped to the
+  project's JS/TS harnesses. It is not a Zig lint policy: Zig source is
+  governed by `CODING_CONVENTION.md` and `scripts/check_conventions.sh`.
+
+### Vendored Skill Overrides
+
+Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
+`SKILL.md`. Project rules outrank skill defaults:
+
+- **Manual-only skills**: `improve-codebase-architecture`, `grill-me`, and
+  `thermo-nuclear-code-quality-review` set `disable-model-invocation: true`.
+  Run them only when the user or root agent requests the pass, by reading the
+  pinned `SKILL.md` and following it. `grill-me` routes to `grilling`; the
+  architect and reviewer instructions name these passes explicitly.
+- **No emojis**: replace emoji markers in a skill's output template with plain
+  text (`Q1`, `->`, `[strong]`).
+- **`improve-codebase-architecture`**: `CODEBASE.md` is the current domain
+  vocabulary. Create `GLOSSARY.md` only when a term is actually resolved, and
+  write review reports under the OS temp directory, never the repository.
+- **`thermo-nuclear-code-quality-review`**: the 1000-line threshold is a
+  review flag, not a mechanical split. Existing oversized files are not a
+  license to keep growing; apply `code-simplification` and the project
+  ownership boundaries.
+- **`install-anti-slop`**: JS/TS only. Never apply it to Zig source or add an
+  Oxlint toolchain to the Zig build unless the task explicitly covers JS/TS
+  linting.
 
 ## Integrations
 - Seamlessly interact with C/C++ and Go projects via Zig FFI.
@@ -113,12 +151,16 @@ Follow this sequence:
 1. **Architect** reads the request and relevant project context, states
    assumptions, identifies affected ownership boundaries, and produces a
    scoped plan with acceptance criteria. The architect does not implement.
+   Use `grilling` when a plan is expensive or hard to reverse, and
+   `improve-codebase-architecture` when the request is explicitly a
+   deep-module scan.
 2. **Developer** implements the assigned slice, consulting the relevant
    domain specialist where useful. Developers report changed files, commands,
    and unresolved questions; they do not claim unrun checks passed.
 3. **Reviewer** independently reviews the resulting diff and evidence for
    correctness, security, compatibility, tests, conventions, and scope. The
    reviewer is read-only and reports findings with file and line references.
+   Add `thermo-nuclear-code-quality-review` when the diff is structural.
 4. **Integrator** resolves ownership overlaps, routes findings back to the
    developer, checks the final combined diff and required verification, and
    prepares the delivery summary. Re-review changed work before integration.

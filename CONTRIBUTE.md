@@ -51,6 +51,12 @@ graphify install --project --platform opencode
 Codex loads the project `.codex/` layer only for trusted projects. Trust the
 checkout once, then use `/hooks` to review the no-op Graphify hook.
 
+Project skills live under `.agents/skills/` and are pinned by
+`skills-lock.json`. Install or refresh them with `npx skills add ...`; do not
+hand-edit a vendored `SKILL.md`. `AGENTS.md` routes architecture review, plan
+grilling, strict maintainability review, and JS/TS anti-slop tooling, and its
+project overrides take precedence over vendored defaults.
+
 ## Engineering requirements
 
 - Do not allocate in request parsing, frame parsing, masking, routing, or

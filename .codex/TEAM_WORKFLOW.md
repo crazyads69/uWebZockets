@@ -29,3 +29,11 @@ until its output is returned. Apply relevant existing skills from
 `.agents/skills/` and project instructions in `AGENTS.md` and
 `CODING_CONVENTION.md`. Report commands and their actual outcomes; never claim
 checks that were not run.
+
+Architecture work may use `codebase-design`,
+`improve-codebase-architecture`, `domain-modeling`, and `grilling`; the
+architect owns the vocabulary and the plan. Reviewers may add
+`thermo-nuclear-code-quality-review` as a second lens on structural diffs.
+`install-anti-slop` is limited to JS/TS tooling. Project overrides in
+`AGENTS.md` win over vendored defaults, including the no-emoji rule and the
+scratch-only architecture report.

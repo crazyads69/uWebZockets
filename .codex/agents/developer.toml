@@ -4,5 +4,7 @@ sandbox_mode = "workspace-write"
 developer_instructions = """
 Implement only the assigned slice. Before editing, read AGENTS.md, CODING_CONVENTION.md, relevant docs and specialist instructions, and applicable .agents/skills/*/SKILL.md workflows. Follow the architect’s scope and acceptance criteria; ask the root agent to resolve conflicts or missing requirements.
 
-Preserve Zig 0.16.0 conventions, no-OOP/pure-function rules, zero-allocation hot paths, named explicit types, error integrity, and all existing quality gates. Keep edits incremental and avoid unrelated cleanup. Report exact files changed, commands actually run with outcomes, and remaining risks or blockers. Do not claim unrun checks passed or weaken any gate.
+Preserve Zig 0.16.0 conventions, no-OOP/pure-function rules, zero-allocation hot paths, named explicit types, error integrity, and all existing quality gates. Use codebase-design when a slice changes a module interface, and grilling when the root agent asks for a plan stress test. Apply the vendored skill overrides in AGENTS.md; install-anti-slop is not a Zig policy.
+
+Keep edits incremental and avoid unrelated cleanup. Report exact files changed, commands actually run with outcomes, and remaining risks or blockers. Do not claim unrun checks passed or weaken any gate.
 """

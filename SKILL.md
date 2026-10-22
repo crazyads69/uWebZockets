@@ -41,16 +41,19 @@ fits the current step and never stack processes that do not apply.
 - **Zero-Leak Testing (`zig-testing`)**: Use `std.testing.allocator` whenever the code under test owns allocations. Exercise fixed-buffer paths with caller-owned storage, malformed-input corpora, Autobahn, and h1spec compliance tests.
 - **Compiler Optimization (`zig-compiler`)**: Distinguish between `ReleaseFast` and `ReleaseSafe`. Always ensure safe runtime checks during development, optimizing to `ReleaseFast` only for proven hot paths.
 
-## 6. Engineering Process (`using-agent-skills`, `interview-me`, `idea-refine`, `spec-driven-development`, `planning-and-task-breakdown`, `incremental-implementation`, `test-driven-development`, `context-engineering`)
+## 6. Engineering Process (`using-agent-skills`, `interview-me`, `idea-refine`, `grill-me`, `grilling`, `improve-codebase-architecture`, `codebase-design`, `domain-modeling`, `spec-driven-development`, `planning-and-task-breakdown`, `incremental-implementation`, `test-driven-development`, `context-engineering`)
 - **Route first (`using-agent-skills`)**: Identify the phase before acting; a bug fix does not need a spec, a new protocol surface does.
 - **Refine the ask (`interview-me`, `idea-refine`)**: When a requirement is underspecified, close the gap before designing anything.
+- **Grill the design (`grill-me`, `grilling`)**: When a plan is expensive or hard to reverse, walk the design tree in rounds until every branch is settled. Use plain `Q1`/`->` labels, not emojis.
+- **Deepen the architecture (`improve-codebase-architecture`, `codebase-design`, `domain-modeling`)**: Scan hot paths for shallow modules and propose deep-module seams; keep the report in the OS temp directory, speak the `codebase-design` vocabulary, and record only resolved terms in `GLOSSARY.md`.
 - **Spec the contract (`spec-driven-development`)**: For new surfaces write the observable contract first: capacities, error names, ownership, RFC clauses, platform matrix.
 - **Slice the work (`planning-and-task-breakdown`, `incremental-implementation`)**: Land thin, verifiable slices; never mix a refactor with a protocol change.
 - **Prove behavior (`test-driven-development`)**: New behavior starts as a failing test under `src/tests/`; bug fixes start as a failing reproduction. RED, then GREEN, then refactor, using the project's own commands.
 - **Engineer context (`context-engineering`)**: Keep sessions scoped; reload `AGENTS.md`, `CODEBASE.md`, and the owning module before cross-cutting edits.
 
-## 7. Quality, Security & Performance (`code-review-and-quality`, `doubt-driven-development`, `debugging-and-error-recovery`, `security-and-hardening`, `performance-optimization`, `observability-and-instrumentation`, `code-simplification`, `constraint-driven-development`)
+## 7. Quality, Security & Performance (`code-review-and-quality`, `thermo-nuclear-code-quality-review`, `doubt-driven-development`, `debugging-and-error-recovery`, `security-and-hardening`, `performance-optimization`, `observability-and-instrumentation`, `code-simplification`, `constraint-driven-development`)
 - **Review before merge (`code-review-and-quality`)**: check correctness, ownership, tests, docs, and gate integrity, in that order.
+- **Run the deep quality lens (`thermo-nuclear-code-quality-review`)**: on structural diffs, look for code-judo restructurings that delete complexity. This supplements the standard review and never overrides project gates; the 1000-line threshold is a flag, not a mechanical split.
 - **Doubt the hard parts (`doubt-driven-development`)**: Crypto, C ABI, framing, completion ordering, and release changes get a fresh-context adversarial pass before landing.
 - **Debug to root cause (`debugging-and-error-recovery`)**: reproduce, isolate, fix, and prevent; never paper over a failure with a retry.
 - **Harden (`security-and-hardening`)**: threat-model every input boundary (TLS, HTTP, WebSocket, QUIC, C ABI) for smuggling, injection, replay, timing, and exhaustion; fail closed.
@@ -59,7 +62,7 @@ fits the current step and never stack processes that do not apply.
 - **Simplify (`code-simplification`, `ponytail`)**: prefer the smallest correct change; delete code before adding it.
 - **Guard the bar (`constraint-driven-development`)**: never lower a gate, threshold, or baseline to land a change.
 
-## 8. Delivery & Documentation (`api-and-interface-design`, `source-driven-development`, `documentation-and-adrs`, `deprecation-and-migration`, `git-workflow-and-versioning`, `ci-cd-and-automation`, `shipping-and-launch`)
+## 8. Delivery & Documentation (`api-and-interface-design`, `source-driven-development`, `documentation-and-adrs`, `deprecation-and-migration`, `git-workflow-and-versioning`, `ci-cd-and-automation`, `shipping-and-launch`, `install-anti-slop`)
 - **Design interfaces (`api-and-interface-design`)**: public surfaces are contracts: fixed capacities, explicit ownership, specific error names, additive evolution.
 - **Cite sources (`source-driven-development`)**: ground RFC and upstream API decisions in the pinned specs and headers, not memory.
 - **Record decisions (`documentation-and-adrs`)**: non-obvious choices land in `CODEBASE.md`, `docs/`, or `CHANGELOG.md`, not buried in code comments.
@@ -67,9 +70,18 @@ fits the current step and never stack processes that do not apply.
 - **Version atomically (`git-workflow-and-versioning`)**: one logical change per commit, conventional prefixes, synchronized version surfaces.
 - **Automate (`ci-cd-and-automation`)**: workflows stay pinned, deterministic, and cache-correct; never weakened to pass.
 - **Ship (`shipping-and-launch`)**: releases follow the documented checklist, and rollback precedes announcement.
+- **JS/TS tooling (`install-anti-slop`)**: install or update vendored Oxlint rules only when the task explicitly covers JavaScript or TypeScript harnesses. Never add an Oxlint toolchain to the Zig build; Zig hygiene stays with `CODING_CONVENTION.md`.
 
 ## 9. Knowledge Graph (`graphify`, Codex and OpenCode)
 - Ask the graph first: for architecture, file-relationship, or "how does X work" questions, use the `graphify` MCP tools or `graphify query` against `graphify-out/graph.json` instead of re-scanning the tree.
 - Rebuild only on explicit request (`/graphify`); never regenerate the graph as a side effect of a scoped code change.
 - `graphify-out/` is generated and git-ignored; do not commit it.
 - Treat graph answers as navigation hints and confirm behavior in the source.
+
+## 10. Vendored Skill Overrides
+- **Project rules win**: `AGENTS.md` and `CODING_CONVENTION.md` outrank every vendored skill default.
+- **Manual-only passes**: `improve-codebase-architecture`, `grill-me`, and `thermo-nuclear-code-quality-review` are opt-in. Run them only when requested, by reading their `SKILL.md`; do not auto-load them for every task.
+- **No emojis**: the `grilling` template's emoji markers become plain `Q1` and `->` labels. Architecture report badges become `[strong]`, `[worth exploring]`, and `[speculative]`.
+- **Scratch artifacts**: architecture reports go to the OS temp directory and are never committed. `GLOSSARY.md` is created only when a domain term is actually resolved; until then `CODEBASE.md` is the vocabulary source.
+- **Review is additive**: `thermo-nuclear-code-quality-review` and `improve-codebase-architecture` produce candidate findings. They do not edit production code, lower gates, or override specialist ownership.
+- **No JS toolchain creep**: `install-anti-slop` exists for JS/TS harnesses only. Zig source and its build graph stay on `zig fmt` and `scripts/check_conventions.sh`.
