@@ -726,6 +726,16 @@ test "router: static index resolves exact routes with identical match data" {
     );
 }
 
+test "router: pattern-only routers skip the static index" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get("/users/:id", dummy_handler);
+    try std.testing.expectEqual(@as(u16, 1), router.node_count);
+
+    const matched = router.match("/users/42", .get).?;
+    try std.testing.expectEqual(@intFromPtr(&dummy_handler), @intFromPtr(matched.http_handler.?));
+}
+
 test "router: static index follows a route moved by a split" {
     var bundle = radix.DefaultBundle{};
     var router = try radix.Router.init(bundle.storage());

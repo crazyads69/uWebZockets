@@ -214,43 +214,53 @@ pub const ClientConnection = struct {
         self.phase = .teardown;
         const loop = self.loop.?;
 
-        // kqueue drops callbacks for completions canceled before submission and
-        // discards armed kevents when the descriptor closes; the close
-        // callback clears the outstanding flags instead.
-        if (!xev.is_kqueue()) {
-            if (self.connect_active) {
-                self.connect_cancel_active = true;
-                core_loop.cancel(
-                    loop,
-                    &self.connect_completion,
-                    &self.connect_cancel_completion,
-                    ClientConnection,
-                    self,
-                    on_connect_cancel_complete,
-                );
-            }
-            if (self.read_active) {
-                self.read_cancel_active = true;
-                core_loop.cancel(
-                    loop,
-                    &self.read_completion,
-                    &self.read_cancel_completion,
-                    ClientConnection,
-                    self,
-                    on_read_cancel_complete,
-                );
-            }
-            if (self.write_active) {
-                self.write_cancel_active = true;
-                core_loop.cancel(
-                    loop,
-                    &self.write_completion,
-                    &self.write_cancel_completion,
-                    ClientConnection,
-                    self,
-                    on_write_cancel_complete,
-                );
-            }
+        if ((self.connect_active or self.read_active or self.write_active) and
+            (builtin.os.tag == .windows or xev.submit_before_cancel()))
+        {
+            // IOCP and kqueue drop the callback of a completion canceled before
+            // it starts. Flush queued work so the target callback owns its flag.
+            xev.submit(loop) catch |err| {
+                // Keep the target flags set: reusing a slot whose queued
+                // callback may still fire would corrupt a new client request.
+                log.err("client submit before teardown failed: {}", .{err});
+            };
+        }
+
+        // Cancel every armed completion so each backend drops its active count
+        // before the descriptor closes. The target and cancel callbacks each
+        // own their flags, so release waits until both have run.
+        if (self.connect_active) {
+            self.connect_cancel_active = true;
+            core_loop.cancel(
+                loop,
+                &self.connect_completion,
+                &self.connect_cancel_completion,
+                ClientConnection,
+                self,
+                on_connect_cancel_complete,
+            );
+        }
+        if (self.read_active) {
+            self.read_cancel_active = true;
+            core_loop.cancel(
+                loop,
+                &self.read_completion,
+                &self.read_cancel_completion,
+                ClientConnection,
+                self,
+                on_read_cancel_complete,
+            );
+        }
+        if (self.write_active) {
+            self.write_cancel_active = true;
+            core_loop.cancel(
+                loop,
+                &self.write_completion,
+                &self.write_cancel_completion,
+                ClientConnection,
+                self,
+                on_write_cancel_complete,
+            );
         }
 
         if (self.timer_active and !self.timer_cancel_active) {
@@ -723,15 +733,11 @@ pub const ClientConnection = struct {
 
         self.close_complete = true;
         if (xev.cancel_abandons_target()) {
-            // epoll removes a canceled fd registration without invoking its
-            // callback, and kqueue discards armed kevents on close; clear the
-            // flags those callbacks would have cleared.
+            // epoll drops the target callback; clear the target flags. kqueue
+            // and io_uring deliver it, so their callbacks own these flags.
             self.connect_active = false;
             self.read_active = false;
             self.write_active = false;
-            self.connect_cancel_active = false;
-            self.read_cancel_active = false;
-            self.write_cancel_active = false;
         }
         self.maybe_release();
         return .disarm;

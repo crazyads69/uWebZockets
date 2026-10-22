@@ -141,13 +141,19 @@ kill -0 "${server_pid}"
 jq -e '.trailers.outcome == "response" and .trailers.status == 200' \
   "${artifact_dir}/aioquic_results.json" >/dev/null
 malformed_count="$(jq '.malformed_cases | length' "${expectations}")"
+stream_error="$(jq '.malformed_stream_error' "${expectations}")"
 # The example server uses App(128); the soak sends more than its 2*128 header
-# pool slots and a fresh connection must still be served.
-jq -e --argjson count "${malformed_count}" \
+# pool slots and a fresh connection must still be served. The oversized QPACK
+# case must stay stream-scoped and leave its sibling request healthy.
+jq -e --argjson count "${malformed_count}" --argjson stream_error "${stream_error}" \
   '(.malformed | length) == $count and
    (.malformed_siblings | length) == $count and
    ([.malformed_siblings[] |
       .outcome == "response" and .status == 200] | all) and
+   (.oversized_qpack.outcome == "stream_reset") and
+   (.oversized_qpack.error_code == $stream_error) and
+   (.oversized_qpack_sibling.outcome == "response") and
+   (.oversized_qpack_sibling.status == 200) and
    (.post_malformed_health.outcome == "response") and
    (.post_malformed_health.status == 200) and
    (.soak.requests > 0) and

@@ -27,11 +27,72 @@ class ResponseState:
     body: bytearray = field(default_factory=bytearray)
 
 
+def encode_varint(value: int) -> bytes:
+    if value < 64:
+        return bytes([value])
+    if value < 16384:
+        return (value | 0x4000).to_bytes(2, "big")
+    if value < 1073741824:
+        return (value | 0x80000000).to_bytes(4, "big")
+    return (value | 0xC000000000000000).to_bytes(8, "big")
+
+
+def encode_prefixed_int(value: int, prefix_bits: int, base: int = 0) -> bytes:
+    limit = (1 << prefix_bits) - 1
+    if value < limit:
+        return bytes([base | value])
+    encoded = bytearray([base | limit])
+    value -= limit
+    while value >= 128:
+        encoded.append((value & 0x7F) | 0x80)
+        value >>= 7
+    encoded.append(value)
+    return bytes(encoded)
+
+
+def qpack_literal_header(name: bytes, value: bytes) -> bytes:
+    # Literal Field Line With Literal Name, no never-index bit, no Huffman.
+    encoded = bytearray(encode_prefixed_int(len(name), 3, 0x20))
+    encoded.extend(name)
+    encoded.extend(encode_prefixed_int(len(value), 7))
+    encoded.extend(value)
+    return bytes(encoded)
+
+
+def oversized_header_block(authority: bytes, field_count: int, value_bytes: int) -> bytes:
+    # Required Insert Count and Delta Base are zero: no dynamic table use.
+    encoded = bytearray((0, 0))
+    for name, value in (
+        (b":method", b"GET"),
+        (b":scheme", b"https"),
+        (b":authority", authority),
+        (b":path", b"/"),
+    ):
+        encoded.extend(qpack_literal_header(name, value))
+    value = b"a" * value_bytes
+    for index in range(field_count):
+        encoded.extend(qpack_literal_header(f"x{index}".encode(), value))
+    return bytes(encoded)
+
+
 class ProbeProtocol(QuicConnectionProtocol):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.http = H3Connection(self._quic)
         self.responses: dict[int, ResponseState] = {}
+
+    async def raw_headers(self, block: bytes, timeout: float):
+        stream_id = self._quic.get_next_available_stream_id()
+        state = ResponseState(asyncio.get_running_loop().create_future())
+        self.responses[stream_id] = state
+        payload = encode_varint(1) + encode_varint(len(block)) + block
+        self._quic.send_stream_data(stream_id, payload, end_stream=False)
+        self.transmit()
+        try:
+            return await asyncio.wait_for(asyncio.shield(state.future), timeout)
+        except asyncio.TimeoutError:
+            self.responses.pop(stream_id, None)
+            return {"outcome": "timeout", "stream_id": stream_id}
 
     async def request(
         self,
@@ -187,6 +248,42 @@ async def run(args):
                     f"malformed request used wrong stream error: {case}: {outcome}"
                 )
             assert_response(f"sibling request for {case}", sibling, expected_response)
+
+        oversized = expectations.get("oversized_qpack")
+        if oversized is not None:
+            oversized_request = asyncio.create_task(
+                protocol.raw_headers(
+                    oversized_header_block(
+                        authority,
+                        int(oversized["field_count"]),
+                        int(oversized["value_bytes"]),
+                    ),
+                    args.timeout,
+                )
+            )
+            oversized_sibling = asyncio.create_task(
+                protocol.request(request_headers(authority), args.timeout)
+            )
+            outcome, sibling = await asyncio.gather(
+                oversized_request,
+                oversized_sibling,
+            )
+            results["oversized_qpack"] = outcome
+            results["oversized_qpack_sibling"] = sibling
+            if outcome.get("outcome") != "stream_reset":
+                raise RuntimeError(
+                    f"oversized header block was not rejected: {outcome}"
+                )
+            if outcome.get("error_code") != expected_stream_error:
+                raise RuntimeError(
+                    "oversized header block used wrong stream error: "
+                    f"{outcome}"
+                )
+            assert_response(
+                "sibling request for oversized header block",
+                sibling,
+                expected_response,
+            )
 
         # More malformed requests than the engine's header pool can hold
         # (2 * connection capacity). A leaked header set per rejection would

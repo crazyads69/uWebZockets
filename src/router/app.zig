@@ -527,6 +527,7 @@ pub fn configured_app_with_route_params(
             self.watcher = null;
             if (self.signal_watcher) |*watcher| watcher.deinit();
             self.signal_watcher = null;
+            for (self.listeners[0..self.listener_count]) |*server| core_tcp.deinit_server(server);
             self.listener_count = 0;
 
             if (self.quic_transport) |*transport| transport.deinit();
@@ -1252,7 +1253,10 @@ pub fn configured_app_with_route_params(
 
             var bound: usize = 0;
             errdefer {
-                for (self.listeners[0..bound]) |*server| close_socket_now(server.listener);
+                for (self.listeners[0..bound]) |*server| {
+                    core_tcp.deinit_server(server);
+                    close_socket_now(server.listener);
+                }
             }
 
             // Phase 1: bind every endpoint without arming any accept.
@@ -1318,6 +1322,9 @@ pub fn configured_app_with_route_params(
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (!self.http3_enabled or self.quic_tls_ctx == null) return error.Http3NotInitialized;
             if (self.quic_transport != null) return error.AlreadyListening;
+            // lsxpack field lengths are u16. HTTP/1.1 and HTTP/2 may still use
+            // a larger shared header limit; only HTTP/3 activation is bounded.
+            if (self.max_header_size > std.math.maxInt(u16)) return error.InvalidHttp3Capacity;
             try self.ensure_router();
             // Register the metrics route before the transport exists, so an
             // install failure can never strand a started transport.

@@ -88,6 +88,8 @@ pub const ServerConfig = struct {
     ///
     /// The request buffer reserves this many bytes ahead of the body; headers
     /// beyond the inline `Request` arrays also need `max_header_count` slots.
+    /// HTTP/2 and HTTP/3 request-header storage share this value. HTTP/3
+    /// activation requires it to fit the 16-bit lsxpack field length.
     max_header_size: usize = http_parser.max_header_size,
     /// Maximum headers accepted on one request, including overflow storage.
     ///
@@ -567,7 +569,8 @@ pub const ServerConfig = struct {
         if (self.max_h3_response_header_size > std.math.maxInt(u16)) {
             return error.InvalidHttp3Capacity;
         }
-        // Request header bytes and the QUIC receive credit are u32.
+        // Request header bytes and the QUIC receive credit are u32. The tighter
+        // lsxpack u16 field-length bound is enforced only when HTTP/3 starts.
         if (self.max_header_size > std.math.maxInt(u32)) return error.InvalidHttp3Capacity;
         if (self.max_h3_body_size > std.math.maxInt(u32) - self.max_header_size) {
             return error.InvalidHttp3Capacity;

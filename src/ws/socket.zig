@@ -62,10 +62,10 @@ pub const WebSocket = struct {
 
         const client_key = handshake.validate_request(
             req.method,
-            unique_header(req, "Connection"),
-            unique_header(req, "Upgrade"),
-            unique_header(req, "Sec-WebSocket-Version"),
-            unique_header(req, "Sec-WebSocket-Key"),
+            req.get_unique_header("Connection"),
+            req.get_unique_header("Upgrade"),
+            req.get_unique_header("Sec-WebSocket-Version"),
+            req.get_unique_header("Sec-WebSocket-Key"),
         ) catch |err| {
             const unsupported_version = err == error.MissingVersion or err == error.UnsupportedVersion;
             const status = if (unsupported_version) "426 Upgrade Required" else "400 Bad Request";
@@ -714,9 +714,10 @@ pub const WebSocket = struct {
 };
 
 fn negotiate_permessage_deflate(req: *const Request) ?handshake.PerMessageDeflate {
-    for (req.header_names[0..req.header_count], req.header_values[0..req.header_count]) |name, value| {
-        if (!std.ascii.eqlIgnoreCase(name, "Sec-WebSocket-Extensions")) continue;
-        if (handshake.negotiate_permessage_deflate(value)) |negotiated| return negotiated;
+    var entries = req.headers().entries();
+    while (entries.next()) |entry| {
+        if (!std.ascii.eqlIgnoreCase(entry.name, "Sec-WebSocket-Extensions")) continue;
+        if (handshake.negotiate_permessage_deflate(entry.value)) |negotiated| return negotiated;
     }
     return null;
 }
@@ -735,16 +736,6 @@ pub fn validate_outgoing_payload(data: []const u8, opcode: zslay.Opcode) !void {
         .binary => {},
         else => return error.InvalidOpcode,
     }
-}
-
-fn unique_header(req: *const Request, name: []const u8) ?[]const u8 {
-    var value: ?[]const u8 = null;
-    for (req.header_names[0..req.header_count], req.header_values[0..req.header_count]) |header_name, header_value| {
-        if (!std.ascii.eqlIgnoreCase(header_name, name)) continue;
-        if (value != null) return null;
-        value = header_value;
-    }
-    return value;
 }
 
 fn reject_upgrade(

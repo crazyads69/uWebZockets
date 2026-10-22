@@ -216,7 +216,8 @@ try server.run();
 
 `with_max_request_line_size`, `with_max_header_size`, and `with_max_header_count`
 extend the HTTP/1 request limits; fields beyond the inline 64 get per-connection
-slab storage. `with_max_route_nodes`, `with_max_pattern_routes`,
+slab storage. `max_header_size` also sizes HTTP/3 request headers, so enabling
+HTTP/3 requires it to be at most 65535. `with_max_route_nodes`, `with_max_pattern_routes`,
 `with_max_middleware`, `with_max_route_path_size`,
 `with_max_route_registry_size`, and `with_max_route_params` size the
 slab-carved router and its capture spill. HTTP/2 metadata is sized by
@@ -304,7 +305,7 @@ normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v2.0.0  ready in
+summary before the first accepting listener: `µWebZockets v2.0.5  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than

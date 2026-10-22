@@ -550,9 +550,13 @@ qdh_prepare_decode (void *stream_p, struct lsxpack_header *xhdr, size_t space)
     struct lsquic_stream *const stream = stream_p;
     union hblock_ctx *const u = stream->sm_hblock_ctx;
     struct qpack_dec_hdl *const qdh = u->ctx.qdh;
+    struct lsxpack_header *prepared;
 
-    return qdh->qdh_enpub->enp_hsi_if->hsi_prepare_decode(
+    prepared = qdh->qdh_enpub->enp_hsi_if->hsi_prepare_decode(
                                                 u->ctx.hset, xhdr, space);
+    if (!prepared)
+        qdh->qdh_flags |= QDH_HSI_HEADER_ERROR;
+    return prepared;
 }
 
 

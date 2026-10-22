@@ -241,12 +241,14 @@ test "config: default slab carries the router region at the end" {
     // node slots, and 256 parent links (5_632 bytes) to the router region,
     // moving 681_711_744 to this total. TRACE adds one 8-byte handler slot per
     // node, moving 681_717_376 to 681_727_616. The HTTP gzip pool pointer adds
-    // eight bytes per connection, moving the total to 681_735_808.
-    try std.testing.expectEqual(@as(usize, 681_735_808), total);
+    // eight bytes per connection, moving the total to 681_735_808. The
+    // incremental parser scan cursor adds two usize fields per connection,
+    // moving the total to 681_752_192.
+    try std.testing.expectEqual(@as(usize, 681_752_192), total);
     // The default route-param extras stride is zero: the region extends the
     // slab by exactly one router region's bytes.
     try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());
-    try std.testing.expectEqual(@as(usize, 680_861_696), total - router_bytes);
+    try std.testing.expectEqual(@as(usize, 680_878_080), total - router_bytes);
 }
 
 test "config: slab bytes grow with each router capacity knob" {
@@ -942,6 +944,22 @@ test "config: builder exposes request limit knobs" {
     );
 }
 
+test "config: builder accepts HTTP/1 headers above the H3 u16 ceiling" {
+    const builder = builder_module.Server.builder(std.testing.io)
+        .with_max_clients(2)
+        .with_max_ws_message_size(1024)
+        .with_write_queue_size(4096)
+        .with_idle_timeout_ms(0)
+        .with_max_header_size(std.math.maxInt(u16) + 1);
+
+    var server = try builder.build(std.testing.allocator);
+    defer server.deinit();
+    try std.testing.expectEqual(
+        @as(usize, std.math.maxInt(u16) + 1),
+        server.max_header_size,
+    );
+}
+
 test "config: builder exposes HTTP/2 capacity knobs" {
     const builder = builder_module.Server.builder(std.testing.io)
         .with_max_clients(2)
@@ -1062,6 +1080,9 @@ test "config: H3 capacity knobs validate, size, and reach the engine type" {
         error.InvalidHttp3Capacity,
         (ServerConfig{ .max_h3_response_header_size = std.math.maxInt(u16) + 1 }).validate(),
     );
+    // The shared HTTP/1/2 limit may exceed the lsxpack u16 field-length
+    // ceiling; HTTP/3 activation enforces that tighter bound separately.
+    try (ServerConfig{ .max_header_size = std.math.maxInt(u16) + 1 }).validate();
     try std.testing.expectError(
         error.SlabSizeOverflow,
         (ServerConfig{ .max_connections = std.math.maxInt(usize) / 2 }).h3_engine_bytes(),

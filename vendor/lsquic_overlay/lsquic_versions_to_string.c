@@ -1,5 +1,5 @@
 /*
- * Pre-generated for lsquic 4.10.0 (d5929af7cec6fd74f1cfea2cb1c07c27ce9102b1) by
+ * Pre-generated for lsquic 4.10.2 (a9616720af78b9aab895145c1792d5305c480ae8) by
  * src/liblsquic/gen-verstrs.pl. Regenerate when the pinned lsquic revision changes.
  */
 

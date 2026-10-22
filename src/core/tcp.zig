@@ -42,6 +42,16 @@ pub const default_write_queue_capacity = 64 * 1024;
 pub const max_http2_streams = 8;
 /// Kernel-streamed bytes one connection may push in a single loop tick.
 pub const file_tick_budget: usize = 4 * zero_copy.max_chunk;
+/// First delayed accept retry after a repeated listener failure.
+pub const accept_retry_initial_ms: u64 = 1;
+/// Upper bound on the accept retry delay.
+pub const accept_retry_max_ms: u64 = 1000;
+/// Consecutive failures tolerated before any delay is applied.
+///
+/// libxev erases the errno for POSIX accept failures, so EMFILE, EAGAIN, and
+/// ECONNABORTED are indistinguishable here. A single transient abort must not
+/// throttle the listener.
+pub const accept_failure_grace: u8 = 1;
 
 const tls_bio_capacity = 32 * 1024;
 const tls_plaintext_record_capacity = 16 * 1024;
@@ -1361,7 +1371,11 @@ pub const TcpConnection = struct {
     pub fn end_write_batch(conn: *TcpConnection) void {
         if (conn.write_batch_depth == 0) return;
         conn.write_batch_depth -= 1;
-        if (conn.write_batch_depth == 0) tcp_file.flush_batched(conn);
+        if (conn.write_batch_depth != 0) return;
+        tcp_file.flush_batched(conn);
+        // A direct batch flush can empty the ring without running the write
+        // completion, so settle backpressure here after handlers have returned.
+        if (!conn.closing) settle_backpressure(conn);
     }
 
     /// Copies one plaintext slice into the bounded transport write path.
@@ -1394,14 +1408,18 @@ pub const TcpConnection = struct {
 
         var framing_buffer: [128]u8 = undefined;
         const framing = try http_status.format_http1_framing(&framing_buffer, status, length);
-        try tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" });
 
         // HEAD keeps the transfer length but never streams body bytes.
         if (length == 0 or self.suppress_response_body) {
+            try tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" });
             file.close(self.io);
             if (close_after) close_after_flush(self);
             return;
         }
+
+        // Ownership precedes the head write so neither the direct-send path nor
+        // a batched direct flush can finish the head without arming the
+        // completion that pumps the body.
         self.file_body = file;
         self.file_offset = offset;
         self.file_remaining = length;
@@ -1409,6 +1427,14 @@ pub const TcpConnection = struct {
         // HTTP/1 responses are ordered: hold pipelined dispatch until the body
         // drains so no later response can interleave with the file bytes.
         self.dispatch_suspended = true;
+        tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" }) catch |err| {
+            // The transfer never started, so the caller still owns `file`.
+            self.file_body = null;
+            self.file_remaining = 0;
+            self.file_close_after = false;
+            self.dispatch_suspended = false;
+            return err;
+        };
     }
 
     /// Releases a pending response file without touching queued socket bytes.
@@ -1624,10 +1650,7 @@ fn on_write_complete(
     // producers that stopped at transport backpressure.
     conn.pump_http2_streams();
 
-    if (conn.was_backpressured and conn.write_len < conn.write_queue.len / 2) {
-        conn.was_backpressured = false;
-        if (conn.ws.initialized) conn.ws.notify_drain();
-    }
+    settle_backpressure(conn);
 
     if (conn.stream_producer != null) conn.pump_stream_body();
 
@@ -1639,6 +1662,18 @@ fn on_write_complete(
     tcp_file.pump_file_body(conn);
     conn.start_write();
     return .disarm;
+}
+
+/// Clears transport backpressure and wakes a paused WebSocket producer.
+///
+/// The caller must be outside a user send callback: `notify_drain` may call
+/// `ws.send` again, and re-entering the ring while a batch is still open would
+/// reorder frames.
+fn settle_backpressure(conn: *TcpConnection) void {
+    if (!conn.was_backpressured) return;
+    if (conn.write_len >= conn.write_queue.len / 2) return;
+    conn.was_backpressured = false;
+    if (conn.ws.initialized) conn.ws.notify_drain();
 }
 
 /// Advances a ring head after a completed partial or full write.
@@ -1687,44 +1722,45 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.release_file_body();
     conn.deinit_tls();
 
-    if (builtin.os.tag == .windows and (conn.read_active or conn.is_writing)) {
-        // IOCP queues operations until the next tick. If this close runs in the
-        // callback that queued the read or write, CancelIoEx cannot see the
-        // target yet and only the cancel callback would fire. Submit first so
-        // the target becomes active and its own callback clears the flags.
+    if ((conn.read_active or conn.is_writing) and
+        (builtin.os.tag == .windows or xev.submit_before_cancel()))
+    {
+        // A completion canceled before it starts may never deliver its own
+        // callback: IOCP marks it dead, and kqueue drops it while it is still
+        // in the submission queue. Flush first so every cancel observes an
+        // active target whose callback clears the target flag.
         xev.submit(conn.loop) catch |err| {
-            log.warn("queued completion submit failed before close: {}", .{err});
+            // Keep the target flags set: the backend cannot dispatch the
+            // queued completions, so reusing the slot could fire a stale
+            // callback into a new connection. Shutdown fails closed instead.
+            log.err("queued completion submit failed before close: {}", .{err});
         };
     }
 
-    // kqueue discards armed kevents when the descriptor closes, and a read or
-    // write completion canceled before submission can have its callback
-    // dropped by that backend. Skipping the cancels there is safe: callbacks
-    // already fetched for this tick run before the close completion, and the
-    // close callback clears the outstanding flags.
-    if (!xev.is_kqueue()) {
-        if (conn.read_active) {
-            conn.read_cancel_active = true;
-            core_loop.cancel(
-                conn.loop,
-                &conn.read_completion,
-                &conn.read_cancel_completion,
-                TcpConnection,
-                conn,
-                on_read_cancel_complete,
-            );
-        }
-        if (conn.is_writing) {
-            conn.write_cancel_active = true;
-            core_loop.cancel(
-                conn.loop,
-                &conn.write_completion,
-                &conn.write_cancel_completion,
-                TcpConnection,
-                conn,
-                on_write_cancel_complete,
-            );
-        }
+    // Cancel every armed completion so each backend drops its active count
+    // before the descriptor closes. kqueue abandons the target callback but
+    // still completes the cancel, so the close path waits for both.
+    if (conn.read_active) {
+        conn.read_cancel_active = true;
+        core_loop.cancel(
+            conn.loop,
+            &conn.read_completion,
+            &conn.read_cancel_completion,
+            TcpConnection,
+            conn,
+            on_read_cancel_complete,
+        );
+    }
+    if (conn.is_writing) {
+        conn.write_cancel_active = true;
+        core_loop.cancel(
+            conn.loop,
+            &conn.write_completion,
+            &conn.write_cancel_completion,
+            TcpConnection,
+            conn,
+            on_write_cancel_complete,
+        );
     }
 
     if (builtin.os.tag == .windows) {
@@ -1762,13 +1798,11 @@ pub fn close_connection(conn: *TcpConnection) void {
                 const connection = user_data orelse return .disarm;
                 connection.close_complete = true;
                 if (xev.cancel_abandons_target()) {
-                    // epoll removes a canceled fd registration without
-                    // invoking its callback, and kqueue discards armed kevents
-                    // on close; clear the flags those callbacks would clear.
+                    // epoll drops the target callback; clear the target flags.
+                    // kqueue and io_uring deliver it, so their callbacks own
+                    // these flags and the release gate waits for them.
                     connection.read_active = false;
                     connection.is_writing = false;
-                    connection.read_cancel_active = false;
-                    connection.write_cancel_active = false;
                 }
                 release_closed_connection(connection);
                 return .disarm;
@@ -1842,11 +1876,19 @@ pub const TcpServer = struct {
     accept_completion: xev.Completion = .{},
     close_completion: xev.Completion = .{},
     accept_cancel_completion: xev.Completion = .{},
+    /// One-shot delay armed only while the listener keeps failing to accept.
+    accept_retry_completion: xev.Completion = .{},
+    accept_retry_cancel_completion: xev.Completion = .{},
+    accept_retry_timer: xev.Timer,
     listener: xev.TCP,
     on_connection: AcceptCallback,
     user_data: ?*anyopaque,
+    /// Consecutive accept failures since the last successful accept.
+    accept_fail_streak: u8 = 0,
     closing: bool = false,
     close_complete: bool = false,
+    accept_retry_active: bool = false,
+    accept_retry_cancel_active: bool = false,
 };
 
 /// Binds a non-blocking TCP listener without starting accept completions.
@@ -1894,10 +1936,20 @@ fn init_server_options(
     try listener.listen(128);
 
     return .{
+        .accept_retry_timer = try xev.Timer.init(),
         .listener = listener,
         .on_connection = callback,
         .user_data = user_data,
     };
+}
+
+/// Returns the delay before the next accept attempt for a failure streak.
+///
+/// Zero means retry through the normal `.rearm` path immediately.
+pub fn accept_retry_delay_ms(consecutive_failures: u8) u64 {
+    if (consecutive_failures <= accept_failure_grace) return 0;
+    const shift: u6 = @intCast(@min(consecutive_failures - accept_failure_grace - 1, 10));
+    return @min(accept_retry_initial_ms << shift, accept_retry_max_ms);
 }
 
 /// Winsock `setsockopt` signature; referenced only by the Windows branch.
@@ -2068,9 +2120,14 @@ pub fn set_nodelay(fd: SocketFd) void {
 
 /// Arms the listener's recurring accept completion.
 pub fn accept_start(server: *TcpServer, loop: *Loop) void {
+    if (server.closing or server.accept_retry_active) return;
+    arm_accept(server, loop.get_xev_loop());
+}
+
+fn arm_accept(server: *TcpServer, loop: *xev.Loop) void {
     if (server.closing) return;
     server.listener.accept(
-        loop.get_xev_loop(),
+        loop,
         &server.accept_completion,
         TcpServer,
         server,
@@ -2082,6 +2139,27 @@ pub fn accept_start(server: *TcpServer, loop: *Loop) void {
 pub fn close_server(server: *TcpServer, loop: *Loop) void {
     if (server.closing) return;
     server.closing = true;
+
+    if (server.accept_retry_active and !server.accept_retry_cancel_active) {
+        server.accept_retry_cancel_active = true;
+        server.accept_retry_timer.cancel(
+            loop.get_xev_loop(),
+            &server.accept_retry_completion,
+            &server.accept_retry_cancel_completion,
+            TcpServer,
+            server,
+            on_accept_retry_cancel_complete,
+        );
+    }
+
+    // kqueue and IOCP defer an armed accept until submit. Flush first so the
+    // cancel observes an active target instead of dropping its callback.
+    if (xev.submit_before_cancel()) {
+        xev.submit(loop.get_xev_loop()) catch |err| {
+            log.err("accept submit before close failed: {}", .{err});
+        };
+    }
+
     if (server.accept_completion.state() == .active) {
         core_loop.cancel(
             loop.get_xev_loop(),
@@ -2106,6 +2184,13 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
     );
 }
 
+/// Releases the retry timer after `close_server` has drained.
+pub fn deinit_server(server: *TcpServer) void {
+    std.debug.assert(!server.accept_retry_active);
+    std.debug.assert(!server.accept_retry_cancel_active);
+    server.accept_retry_timer.deinit();
+}
+
 fn on_accept_cancel_complete(
     _: ?*void,
     _: *xev.Loop,
@@ -2124,15 +2209,15 @@ fn on_accept_complete(
     completion: *xev.Completion,
     result: xev.AcceptError!xev.TCP,
 ) xev.CallbackAction {
-    _ = loop;
     _ = completion;
 
     const server = user_data.?;
     const accepted_socket = result catch |err| {
         if (server.closing) return .disarm;
-        log.warn("accept error: {}", .{err});
-        return .rearm;
+        return accept_failed(server, loop, err);
     };
+
+    server.accept_fail_streak = 0;
 
     if (server.closing) {
         close_unregistered_socket(accepted_socket);
@@ -2143,6 +2228,59 @@ fn on_accept_complete(
     set_nodelay(xev.tcp_fd(accepted_socket));
     server.on_connection(accepted_socket, server.user_data);
     return .rearm;
+}
+
+/// Defers the next accept after a listener error without sleeping the loop.
+fn accept_failed(server: *TcpServer, loop: *xev.Loop, err: anyerror) xev.CallbackAction {
+    if (server.accept_retry_active) return .disarm;
+    server.accept_fail_streak +|= 1;
+    const delay_ms = accept_retry_delay_ms(server.accept_fail_streak);
+    if (delay_ms == 0) {
+        log.warn("accept error: {}; retrying", .{err});
+        return .rearm;
+    }
+
+    log.debug("accept error: {}; retrying in {d} ms", .{ err, delay_ms });
+    server.accept_retry_active = true;
+    server.accept_retry_timer.run(
+        loop,
+        &server.accept_retry_completion,
+        delay_ms,
+        TcpServer,
+        server,
+        on_accept_retry,
+    );
+    return .disarm;
+}
+
+fn on_accept_retry(
+    user_data: ?*TcpServer,
+    loop: *xev.Loop,
+    _: *xev.Completion,
+    result: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    const server = user_data.?;
+    server.accept_retry_active = false;
+    _ = result catch |err| {
+        if (err != error.Canceled) log.debug("accept retry timer error: {}", .{err});
+        return .disarm;
+    };
+    arm_accept(server, loop);
+    return .disarm;
+}
+
+fn on_accept_retry_cancel_complete(
+    user_data: ?*TcpServer,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    result: xev.CancelError!void,
+) xev.CallbackAction {
+    const server = user_data.?;
+    server.accept_retry_cancel_active = false;
+    _ = result catch |err| {
+        if (err != error.NotFound) log.debug("accept retry cancel error: {}", .{err});
+    };
+    return .disarm;
 }
 
 fn on_server_close_complete(

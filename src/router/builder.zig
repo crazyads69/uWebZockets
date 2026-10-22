@@ -111,6 +111,9 @@ pub fn configured_builder(comptime config: ServerConfig) type {
         }
 
         /// Overrides the largest accepted HTTP/1.1 header block.
+        ///
+        /// This value also sizes HTTP/3 request-header storage; enabling HTTP/3
+        /// requires it to be at most 65535.
         pub fn with_max_header_size(
             self: Self,
             comptime value: usize,

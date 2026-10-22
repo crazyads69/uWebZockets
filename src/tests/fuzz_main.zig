@@ -205,6 +205,8 @@ fn fuzz_http_parser(smith: *std.testing.Smith) !void {
         try std.testing.expect(consumed <= input_len);
     }
 
+    // Incremental delivery must not re-examine the whole prefix per call.
+    try std.testing.expect(p.scan_work <= 4 * input_len + 32);
     try std.testing.expect(req.header_count <= req.header_names.len);
     try std.testing.expect(req.body.len <= parser.max_body_size);
 }

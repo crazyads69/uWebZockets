@@ -35,7 +35,7 @@ pub const BackendCapabilities = struct {
     webtransport_draft_16: bool = false,
 };
 
-/// Capabilities actually exposed by the pinned lsquic 4.10.0 integration.
+/// Capabilities actually exposed by the pinned lsquic 4.10.2 integration.
 ///
 /// Raw datagram callbacks are available; server push and the primitives
 /// required by WebTransport draft 16 remain explicitly unsupported.

@@ -84,8 +84,9 @@ fn on_timer_tick(
     if (ctx.stopping) return .disarm;
     ctx.tick_cb();
 
-    // A tick callback may have requested shutdown; never re-arm past it.
-    if (ctx.stopping) return .disarm;
+    // A tick callback may have requested shutdown or armed the timer itself.
+    // Re-arming an already active completion would corrupt the backend queue.
+    if (ctx.active or ctx.stopping) return .disarm;
 
     // io_uring rearms the original absolute timeout, which is already expired.
     ctx.timer.run(loop, completion, ctx.interval_ms, TimerContext, ctx, on_timer_tick);

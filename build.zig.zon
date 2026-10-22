@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "2.0.0",
+    .version = "2.0.5",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -17,15 +17,17 @@
         },
 
         // google/boringssl — Google LLC
+        // Release 0.20261020.0.
         .boringssl = .{
-            .url = "git+https://github.com/google/boringssl#dd73e69a4e86fa178a4d19033c691e9b42cc1088",
-            .hash = "N-V-__8AAI8Hdw49zvJpQMT6mP3lUI2BU88KafEc3BkYlcu6",
+            .url = "git+https://github.com/google/boringssl#d3bf4795ad5b79d646cddf2fec687da5b9b502db",
+            .hash = "N-V-__8AAA5Ieg5843crc8uXWdNhmmfStwJqA-9TknJSx3_n",
         },
 
         // litespeedtech/lsquic — LiteSpeed Technologies Inc.
+        // Release 4.10.2, including the QPACK decoded-header-set bound.
         .lsquic = .{
-            .url = "git+https://github.com/litespeedtech/lsquic#d5929af7cec6fd74f1cfea2cb1c07c27ce9102b1",
-            .hash = "N-V-__8AABlSZwC2bZHS0kM4Fi6Cz3MPxNN3TFeim4QI6R9A",
+            .url = "git+https://github.com/litespeedtech/lsquic#a9616720af78b9aab895145c1792d5305c480ae8",
+            .hash = "N-V-__8AAH6VZwAKiOkYrd_YSpAX_LDuhK6AYwKdPAW-Yg-d",
         },
 
         // litespeedtech/ls-qpack — LiteSpeed Technologies Inc.
@@ -36,8 +38,8 @@
 
         // litespeedtech/ls-hpack — LiteSpeed Technologies Inc.
         .lshpack = .{
-            .url = "git+https://github.com/litespeedtech/ls-hpack#38ceca78054d4175ba3f6411b1b83ac5c485e542",
-            .hash = "N-V-__8AABFJVQBMmGjr7hbydaG9qS3FWrGChwmOj7c-A6Xy",
+            .url = "git+https://github.com/litespeedtech/ls-hpack#fda48e02491d865cce00612be8cc10c2622b8e55",
+            .hash = "N-V-__8AABdJVQA4Si44bpY_UYIuBqJm--4p63YluoS15TT-",
         },
 
         // ebiggers/libdeflate — Eric Biggers

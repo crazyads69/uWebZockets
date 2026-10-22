@@ -1,8 +1,23 @@
 diff --git a/src/liblsquic/lsquic_qdec_hdl.c b/src/liblsquic/lsquic_qdec_hdl.c
-index 17edc37..9baab0f 100644
+index 17edc37..c704669 100644
 --- a/src/liblsquic/lsquic_qdec_hdl.c
 +++ b/src/liblsquic/lsquic_qdec_hdl.c
-@@ -581,7 +581,9 @@ qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh, void *hset,
+@@ -550,9 +550,13 @@ qdh_prepare_decode (void *stream_p, struct lsxpack_header *xhdr, size_t space)
+     struct lsquic_stream *const stream = stream_p;
+     union hblock_ctx *const u = stream->sm_hblock_ctx;
+     struct qpack_dec_hdl *const qdh = u->ctx.qdh;
++    struct lsxpack_header *prepared;
+ 
+-    return qdh->qdh_enpub->enp_hsi_if->hsi_prepare_decode(
++    prepared = qdh->qdh_enpub->enp_hsi_if->hsi_prepare_decode(
+                                                 u->ctx.hset, xhdr, space);
++    if (!prepared)
++        qdh->qdh_flags |= QDH_HSI_HEADER_ERROR;
++    return prepared;
+ }
+ 
+ 
+@@ -581,7 +585,9 @@ qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh, void *hset,
      int retval;
  
      retval = qdh->qdh_enpub->enp_hsi_if->hsi_process_header(hset, xhdr);
@@ -13,7 +28,7 @@ index 17edc37..9baab0f 100644
          QDH_ABORT_CONN_ONCE(qdh, 1, HEC_MESSAGE_ERROR,
                                              "error processing headers");
  
-@@ -603,12 +605,10 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
+@@ -603,12 +609,10 @@ qdh_process_header (void *stream_p, struct lsxpack_header *xhdr)
                                                              xhdr->val_len);
          if (u->ctx.cont_len.has < 0)
          {
@@ -28,7 +43,7 @@ index 17edc37..9baab0f 100644
      }
      else if ((qdh->qdh_flags & QDH_SERVER) &&
              /* If PRIORITY_UPDATE has been used (SMBF_HPRIO_SET), then the
-@@ -658,6 +658,35 @@ qdh_maybe_destroy_hblock_ctx (struct qpack_dec_hdl *qdh,
+@@ -658,6 +662,35 @@ qdh_maybe_destroy_hblock_ctx (struct qpack_dec_hdl *qdh,
  }
  
  
@@ -64,7 +79,7 @@ index 17edc37..9baab0f 100644
  static enum lsqpack_read_header_status
  qdh_header_read_results (struct qpack_dec_hdl *qdh,
          struct lsquic_stream *stream, enum lsqpack_read_header_status rhs,
-@@ -699,6 +728,8 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
+@@ -699,6 +732,8 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
                  LSQ_DEBUG("finishing hset failed");
                  free(uh);
                  qdh->qdh_enpub->enp_hsi_if->hsi_discard_header_set(hset);
@@ -73,7 +88,7 @@ index 17edc37..9baab0f 100644
                  return LQRHS_ERROR;
              }
              uh->uh_hset = hset;
-@@ -727,6 +758,20 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
+@@ -727,6 +762,20 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
      }
      else if (rhs == LQRHS_ERROR)
      {
@@ -94,7 +109,7 @@ index 17edc37..9baab0f 100644
          qdh_maybe_destroy_hblock_ctx(qdh, stream);
          qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
          QDH_ABORT_CONN_ONCE(qdh, 1,
-@@ -763,6 +808,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
+@@ -763,6 +812,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
      if (!u)
      {
          LSQ_INFO("cannot allocate hblock_ctx");
@@ -103,7 +118,7 @@ index 17edc37..9baab0f 100644
          return LQRHS_ERROR;
      }
  
-@@ -773,6 +820,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
+@@ -773,6 +824,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
      {
          free(u);
          LSQ_DEBUG("hsi_create_header_set failure");
@@ -136,10 +151,10 @@ index 68e3ebd..d82ae08 100644
  lsquic_qdh_cancel_stream (struct qpack_dec_hdl *,
                                                  struct lsquic_stream *);
 diff --git a/src/liblsquic/lsquic_stream.c b/src/liblsquic/lsquic_stream.c
-index 19e9bef..75dcabf 100644
+index 264b222..15c6a5b 100644
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -5082,6 +5082,13 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
+@@ -5097,6 +5097,13 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                      assert(LQRHS_ERROR == rhs);
                      stream->sm_qflags &= ~SMQF_QPACK_DEC;
                      filter->hqfi_flags |= HQFI_FLAG_ERROR;

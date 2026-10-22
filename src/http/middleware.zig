@@ -332,12 +332,20 @@ pub const RateLimit = struct {
     options: RateLimitOptions,
     buckets: []RateLimitBucket,
     io: std.Io,
+    /// True when the table was empty at construction, so every occupied slot
+    /// sits on its key's linear-probe path. Restored/pre-seeded tables keep
+    /// the compatibility scan so their placement is never misread.
+    probe_ready: bool = false,
 
     pub fn handler(context: *anyopaque, request: *Request, response: *Response) radix.MiddlewareResult {
         const self: *const RateLimit = @ptrCast(@alignCast(context));
+        if (self.buckets.len == 0) {
+            reject_limited(response, retry_after_seconds(self.options.rate_per_second));
+            return .stop;
+        }
         const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
         const key = rate_limit_key(self.options, request);
-        const slot = locate_bucket(self.buckets, key) orelse {
+        const slot = locate_bucket(self.buckets, key, self.probe_ready) orelse {
             reject_limited(response, retry_after_seconds(self.options.rate_per_second));
             return .stop;
         };
@@ -371,8 +379,24 @@ pub const RateLimit = struct {
 };
 
 /// Builds caller-owned token-bucket rate limiting over the supplied clock.
+///
+/// The bucket table is mutable limiter state and must be owned by exactly one
+/// `RateLimit`. Sharing a live table between instances can mix the probe and
+/// legacy placement modes.
 pub fn rate_limit(io: std.Io, options: RateLimitOptions, buckets: []RateLimitBucket) RateLimit {
-    return .{ .options = options, .buckets = buckets, .io = io };
+    var probe_ready = true;
+    for (buckets) |bucket| {
+        if (bucket.last_refill_ns != 0) {
+            probe_ready = false;
+            break;
+        }
+    }
+    return .{
+        .options = options,
+        .buckets = buckets,
+        .io = io,
+        .probe_ready = probe_ready,
+    };
 }
 
 /// Refills one token bucket from monotonic time and charges one token.
@@ -459,7 +483,33 @@ const BucketSlot = struct {
 };
 
 /// Finds `key`, else a free slot, else the oldest slot for eviction.
-fn locate_bucket(buckets: []const RateLimitBucket, key: u64) ?BucketSlot {
+fn locate_bucket(buckets: []const RateLimitBucket, key: u64, probe_ready: bool) ?BucketSlot {
+    if (buckets.len == 0) return null;
+    if (!probe_ready) return locate_bucket_linear(buckets, key);
+
+    var index = bucket_home(key, buckets.len);
+    var oldest_index: usize = index;
+    var oldest_ns: i128 = std.math.maxInt(i128);
+    var visited: usize = 0;
+    while (visited < buckets.len) : (visited += 1) {
+        const bucket = buckets[index];
+        if (bucket.last_refill_ns == 0) {
+            return .{ .index = index, .matched = false, .evicted = false };
+        }
+        if (bucket.key == key) {
+            return .{ .index = index, .matched = true, .evicted = false };
+        }
+        if (bucket.last_refill_ns < oldest_ns) {
+            oldest_ns = bucket.last_refill_ns;
+            oldest_index = index;
+        }
+        index = if (index + 1 == buckets.len) 0 else index + 1;
+    }
+    return .{ .index = oldest_index, .matched = false, .evicted = true };
+}
+
+/// Exact legacy scan for pre-populated tables.
+fn locate_bucket_linear(buckets: []const RateLimitBucket, key: u64) ?BucketSlot {
     var free: ?usize = null;
     var oldest_index: usize = 0;
     var oldest_ns: i128 = std.math.maxInt(i128);
@@ -475,8 +525,18 @@ fn locate_bucket(buckets: []const RateLimitBucket, key: u64) ?BucketSlot {
         }
     }
     if (free) |index| return .{ .index = index, .matched = false, .evicted = false };
-    if (buckets.len == 0) return null;
     return .{ .index = oldest_index, .matched = false, .evicted = true };
+}
+
+/// Maps a key to its first probe slot with a splitmix64 finalizer.
+fn bucket_home(key: u64, len: usize) usize {
+    var value = key;
+    value ^= value >> 30;
+    value *%= 0xbf58476d1ce4e5b9;
+    value ^= value >> 27;
+    value *%= 0x94d049bb133111eb;
+    value ^= value >> 31;
+    return @intCast(value % len);
 }
 
 /// Resolves the bucket key: custom function, hashed header, or constant.

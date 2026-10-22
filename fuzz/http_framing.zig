@@ -16,11 +16,11 @@ pub fn fuzz_one(input: []const u8) void {
     var state = parser.HttpParser{};
     var request = parser.Request{};
     const first_consumed = parser.consume(&state, &request, buffer[0..split]);
-    enforce_invariants(first_consumed, split, &request);
+    enforce_invariants(first_consumed, split, state.scan_work, &request);
 
     if (!terminal(state.state)) {
         const consumed = parser.consume(&state, &request, buffer);
-        enforce_invariants(consumed, buffer.len, &request);
+        enforce_invariants(consumed, buffer.len, state.scan_work, &request);
     }
 }
 
@@ -32,8 +32,14 @@ export fn LLVMFuzzerTestOneInput(
     return 0;
 }
 
-fn enforce_invariants(consumed: usize, available: usize, request: *const parser.Request) void {
+fn enforce_invariants(
+    consumed: usize,
+    available: usize,
+    scan_work: usize,
+    request: *const parser.Request,
+) void {
     if (consumed > available) @panic("HTTP parser consumed beyond input");
+    if (scan_work > 4 * available + 32) @panic("HTTP parser delimiter scan work is superlinear");
     if (request.header_count > request.header_names.len) @panic("HTTP header count overflow");
     if (request.body.len > parser.max_body_size) @panic("HTTP body bound exceeded");
 }

@@ -70,12 +70,20 @@ pub inline fn is_kqueue() bool {
 }
 
 /// Reports whether canceling an armed fd completion abandons that completion's
-/// callback. epoll removes the registration without invoking it, and kqueue
-/// discards armed kevents when the descriptor closes; the close callback must
-/// clear the flags such a completion would otherwise clear.
+/// callback. epoll removes the registration without invoking it; the close
+/// callback must clear the flags such a completion would otherwise clear.
+/// kqueue and io_uring deliver a Canceled callback once the target is active.
 pub inline fn cancel_abandons_target() bool {
-    const name = @tagName(api.backend);
-    return std.mem.eql(u8, name, "epoll") or std.mem.eql(u8, name, "kqueue");
+    return std.mem.eql(u8, @tagName(api.backend), "epoll");
+}
+
+/// Reports whether a close path must flush queued completions before canceling.
+///
+/// kqueue drops the callback of a completion canceled while it is still in the
+/// submission queue. Submitting first makes the target active so its Canceled
+/// callback can clear the target flag and keep the slot out of the free list.
+pub inline fn submit_before_cancel() bool {
+    return is_kqueue();
 }
 
 /// Returns the descriptor behind a TCP watcher.
@@ -103,10 +111,10 @@ pub fn prefer(be: Backend) bool {
 
 /// Submits completions that the backend queued but has not started yet.
 ///
-/// IOCP defers queued operations until the next tick. A connection closed from
+/// IOCP and kqueue defer queued operations until the next submit. A close from
 /// the callback that queued its read or write must submit before canceling, or
-/// the cancel only marks the target dead and its callback never fires. Other
-/// backends either start operations during `add` or expose no submit step.
+/// the cancel only marks the target dead and its callback never fires. epoll
+/// and io_uring start operations during `add`.
 pub fn submit(loop: *Loop) !void {
     if (comptime api.dynamic) {
         switch (api.backend) {
@@ -126,8 +134,9 @@ pub fn submit(loop: *Loop) !void {
 
 /// Cancels `completion` and reports the outcome through `callback`.
 ///
-/// kqueue drops armed kevents when the descriptor closes, so cancellation is
-/// a no-op there; the close callback clears the outstanding flags instead.
+/// kqueue reconciles its active count through `process_cancellations` and
+/// delivers the target callback after the submission queue is flushed. The
+/// close path therefore waits for both the target and cancel callbacks.
 pub fn cancel(
     loop: *Loop,
     completion: *Completion,
@@ -169,7 +178,6 @@ fn cancel_static(
         }.on_result);
         return;
     }
-    if (api.backend == .kqueue) return;
 
     cancel_completion.* = .{
         .op = .{ .cancel = .{ .c = completion } },
@@ -203,7 +211,6 @@ fn cancel_dynamic(
 ) void {
     switch (api.backend) {
         inline else => |tag| {
-            if (comptime std.mem.eql(u8, @tagName(tag), "kqueue")) return;
             const BackendApi = (comptime api.superset(tag)).Api();
             const inner_loop: *BackendApi.Loop = &@field(loop.backend, @tagName(tag));
             completion.ensureTag(tag);

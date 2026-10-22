@@ -127,6 +127,10 @@ fn parse_absolute_target(target: []const u8) ?TargetView {
 pub const HttpParser = struct {
     state: ParserState = .method,
     mark: usize = 0,
+    /// Absolute input offset where the next delimiter search resumes.
+    scan: usize = 0,
+    /// Bytes examined by delimiter searches for the current request.
+    scan_work: usize = 0,
     content_length: usize = 0,
     chunk_length: usize = 0,
     body_length: usize = 0,
@@ -147,18 +151,28 @@ pub const HttpParser = struct {
     extra_header_count: usize = 0,
 };
 
+/// Enters `state` with the next token starting at `offset`.
+///
+/// The scan cursor restarts at the new token so the previous token's search
+/// cannot leak into the next one.
+fn enter_state(parser: *HttpParser, state: ParserState, offset: usize) void {
+    parser.state = state;
+    parser.mark = offset;
+    parser.scan = offset;
+}
+
 /// Parses bytes into `req` and returns the prefix consumed by this request.
 ///
 /// Request slices borrow `buffer`. Chunked bodies are compacted in place, so
 /// callers must retain the mutable buffer until request dispatch completes.
 pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
-    var i: usize = parser.mark;
-
-    while (i < buffer.len) {
+    while (parser.mark < buffer.len) {
         switch (parser.state) {
             .method => {
-                if (std.mem.indexOfScalar(u8, buffer[i..], ' ')) |space_idx| {
-                    const abs_space = i + space_idx;
+                const search_start = parser.scan;
+                if (std.mem.indexOfScalar(u8, buffer[search_start..], ' ')) |space_idx| {
+                    parser.scan_work += space_idx + 1;
+                    const abs_space = search_start + space_idx;
                     if (abs_space > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
@@ -174,23 +188,30 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         }
                     }
                     req.method = buffer[parser.mark..abs_space];
-                    parser.mark = abs_space + 1;
-                    parser.state = .path;
-                    i = abs_space + 1;
+                    enter_state(parser, .path, abs_space + 1);
                 } else {
-                    if (std.mem.indexOfAny(u8, buffer[i..], "\r\n")) |_| {
+                    const pending = buffer.len - search_start;
+                    parser.scan_work += pending;
+                    // The CRLF pass keeps the existing error precedence: a
+                    // bare CR or LF before the missing space is invalid.
+                    if (std.mem.indexOfAny(u8, buffer[search_start..], "\r\n")) |crlf_idx| {
+                        parser.scan_work += crlf_idx + 1;
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
+                    parser.scan_work += pending;
                     if (buffer.len > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                     }
+                    parser.scan = buffer.len;
                     return buffer.len; // need more data
                 }
             },
             .path => {
-                if (std.mem.indexOfScalar(u8, buffer[i..], ' ')) |space_idx| {
-                    const abs_space = i + space_idx;
+                const search_start = parser.scan;
+                if (std.mem.indexOfScalar(u8, buffer[search_start..], ' ')) |space_idx| {
+                    parser.scan_work += space_idx + 1;
+                    const abs_space = search_start + space_idx;
                     const target = buffer[parser.mark..abs_space];
                     if (abs_space > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
@@ -203,23 +224,28 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                     req.target = target;
                     req.path = view.path;
                     req.query = view.query;
-                    parser.mark = abs_space + 1;
-                    parser.state = .protocol;
-                    i = abs_space + 1;
+                    enter_state(parser, .protocol, abs_space + 1);
                 } else {
-                    if (std.mem.indexOfAny(u8, buffer[i..], "\r\n")) |_| {
+                    const pending = buffer.len - search_start;
+                    parser.scan_work += pending;
+                    if (std.mem.indexOfAny(u8, buffer[search_start..], "\r\n")) |crlf_idx| {
+                        parser.scan_work += crlf_idx + 1;
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
+                    parser.scan_work += pending;
                     if (buffer.len > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                     }
+                    parser.scan = buffer.len;
                     return buffer.len;
                 }
             },
             .protocol => {
-                if (std.mem.indexOfScalar(u8, buffer[i..], '\n')) |nl_idx| {
-                    const abs_nl = i + nl_idx;
+                const search_start = parser.scan;
+                if (std.mem.indexOfScalar(u8, buffer[search_start..], '\n')) |nl_idx| {
+                    parser.scan_work += nl_idx + 1;
+                    const abs_nl = search_start + nl_idx;
                     if (abs_nl + 1 > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
@@ -230,26 +256,25 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                             parser.state = .error_invalid;
                             return buffer.len;
                         }
-                        parser.mark = abs_nl + 1;
-                        parser.state = .headers;
-                        i = abs_nl + 1;
+                        enter_state(parser, .headers, abs_nl + 1);
                     } else {
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
                 } else {
+                    parser.scan_work += buffer.len - search_start;
                     if (buffer.len > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                     }
+                    parser.scan = buffer.len;
                     return buffer.len;
                 }
             },
             .headers => {
-                const headers_end = if (simd.index_of_header_end(buffer[parser.mark..])) |offset|
-                    parser.mark + offset
-                else
-                    null;
-                if (headers_end) |end| {
+                const search_start = parser.scan;
+                if (simd.index_of_header_end(buffer[search_start..])) |offset| {
+                    parser.scan_work += offset + 4;
+                    const end = search_start + offset;
                     if (end - parser.mark > parser.max_header_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
@@ -372,45 +397,46 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                     req.extra_header_count = parser.extra_header_count;
 
                     if (has_te) {
-                        parser.state = .chunk_size;
-                        parser.mark = end + 4;
-                        parser.body_start = end + 4;
+                        enter_state(parser, .chunk_size, end + 4);
+                        parser.body_start = parser.mark;
                         parser.body_length = 0;
-                        i = parser.mark;
                         continue;
                     }
 
                     if (parser.content_length > 0) {
-                        parser.state = .body;
-                        parser.mark = end + 4;
-                        i = parser.mark;
+                        enter_state(parser, .body, end + 4);
                         continue;
                     }
 
-                    parser.state = .done;
-                    parser.mark = end + 4;
+                    enter_state(parser, .done, end + 4);
                     return parser.mark;
                 } else {
+                    parser.scan_work += buffer.len - search_start;
                     if (buffer.len - parser.mark > parser.max_header_bytes) {
                         parser.state = .error_headers_too_large;
                     }
+                    // The four-byte terminator may straddle the delivery
+                    // boundary, so keep a three-byte overlap.
+                    parser.scan = @max(parser.mark, buffer.len -| 3);
                     return buffer.len;
                 }
             },
             .body => {
                 const remaining = buffer.len - parser.mark;
                 if (remaining >= parser.content_length) {
-                    req.body = buffer[parser.mark .. parser.mark + parser.content_length];
-                    parser.mark += parser.content_length;
-                    parser.state = .done;
+                    const body_end = parser.mark + parser.content_length;
+                    req.body = buffer[parser.mark..body_end];
+                    enter_state(parser, .done, body_end);
                     return parser.mark;
                 } else {
                     return buffer.len;
                 }
             },
             .chunk_size => {
-                if (std.mem.indexOfAny(u8, buffer[parser.mark..], "\r;")) |offset| {
-                    const end_idx = parser.mark + offset;
+                const search_start = parser.scan;
+                if (std.mem.indexOfAny(u8, buffer[search_start..], "\r;")) |offset| {
+                    parser.scan_work += offset + 1;
+                    const end_idx = search_start + offset;
                     const hex_str = buffer[parser.mark..end_idx];
                     if (!is_hexadecimal(hex_str)) {
                         parser.state = .error_invalid;
@@ -425,8 +451,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         }
                         parser.chunk_length = len;
                         if (buffer[end_idx] == ';') {
-                            parser.state = .chunk_ext;
-                            parser.mark = end_idx + 1;
+                            enter_state(parser, .chunk_ext, end_idx + 1);
                         } else {
                             if (end_idx + 1 < buffer.len) {
                                 if (buffer[end_idx + 1] != '\n') {
@@ -434,27 +459,31 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                                     return buffer.len;
                                 }
                                 if (len == 0) {
-                                    parser.state = .chunk_trailer;
+                                    enter_state(parser, .chunk_trailer, end_idx + 2);
                                 } else {
-                                    parser.state = .chunk_data;
+                                    enter_state(parser, .chunk_data, end_idx + 2);
                                 }
-                                parser.mark = end_idx + 2;
                             } else {
-                                return buffer.len; // need more data
+                                // The CR and LF may arrive separately.
+                                parser.scan = end_idx;
+                                return buffer.len;
                             }
                         }
-                        i = parser.mark;
                         continue;
                     } else |_| {
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
                 }
+                parser.scan_work += buffer.len - search_start;
+                parser.scan = buffer.len;
                 return buffer.len;
             },
             .chunk_ext => {
-                if (std.mem.indexOfScalar(u8, buffer[parser.mark..], '\r')) |offset| {
-                    const end_idx = parser.mark + offset;
+                const search_start = parser.scan;
+                if (std.mem.indexOfScalar(u8, buffer[search_start..], '\r')) |offset| {
+                    parser.scan_work += offset + 1;
+                    const end_idx = search_start + offset;
                     for (buffer[parser.mark..end_idx]) |c| {
                         if ((c < 32 and c != '\t') or c == 127) {
                             parser.state = .error_invalid;
@@ -467,29 +496,30 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                             return buffer.len;
                         }
                         if (parser.chunk_length == 0) {
-                            parser.state = .chunk_trailer;
+                            enter_state(parser, .chunk_trailer, end_idx + 2);
                         } else {
-                            parser.state = .chunk_data;
+                            enter_state(parser, .chunk_data, end_idx + 2);
                         }
-                        parser.mark = end_idx + 2;
-                        i = parser.mark;
                         continue;
                     } else {
+                        // The CR and LF may arrive separately.
+                        parser.scan = end_idx;
                         return buffer.len;
                     }
                 }
+                parser.scan_work += buffer.len - search_start;
+                parser.scan = buffer.len;
                 return buffer.len;
             },
             .chunk_data => {
                 const available = buffer.len - parser.mark;
                 if (available >= parser.chunk_length) {
-                    const src = buffer[parser.mark .. parser.mark + parser.chunk_length];
+                    const chunk_end = parser.mark + parser.chunk_length;
+                    const src = buffer[parser.mark..chunk_end];
                     const dst = buffer[parser.body_start + parser.body_length .. parser.body_start + parser.body_length + parser.chunk_length];
                     std.mem.copyForwards(u8, dst, src);
                     parser.body_length += parser.chunk_length;
-                    parser.mark += parser.chunk_length;
-                    parser.state = .chunk_crlf;
-                    i = parser.mark;
+                    enter_state(parser, .chunk_crlf, chunk_end);
                     continue;
                 }
                 return buffer.len;
@@ -500,9 +530,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
-                    parser.mark += 2;
-                    parser.state = .chunk_size;
-                    i = parser.mark;
+                    enter_state(parser, .chunk_size, parser.mark + 2);
                     continue;
                 }
                 return buffer.len;
@@ -511,29 +539,33 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                 if (buffer.len - parser.mark >= 2) {
                     if (buffer[parser.mark] == '\r' and buffer[parser.mark + 1] == '\n') {
                         req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
-                        parser.mark += 2;
-                        parser.state = .done;
-                        return parser.mark;
-                    }
-                    if (simd.index_of_header_end(buffer[parser.mark..])) |relative_end| {
-                        const end_idx = parser.mark + relative_end;
-                        if (!valid_trailers(buffer[parser.mark..end_idx], parser.max_header_bytes)) {
-                            parser.state = .error_invalid;
-                            return buffer.len;
-                        }
-                        req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
-                        parser.mark = end_idx + 4;
-                        parser.state = .done;
+                        enter_state(parser, .done, parser.mark + 2);
                         return parser.mark;
                     }
                 }
+                const search_start = parser.scan;
+                if (simd.index_of_header_end(buffer[search_start..])) |relative_end| {
+                    parser.scan_work += relative_end + 4;
+                    const end_idx = search_start + relative_end;
+                    if (!valid_trailers(buffer[parser.mark..end_idx], parser.max_header_bytes)) {
+                        parser.state = .error_invalid;
+                        return buffer.len;
+                    }
+                    req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
+                    enter_state(parser, .done, end_idx + 4);
+                    return parser.mark;
+                }
+                parser.scan_work += buffer.len - search_start;
+                // The four-byte terminator may straddle the delivery
+                // boundary, so keep a three-byte overlap.
+                parser.scan = @max(parser.mark, buffer.len -| 3);
                 return buffer.len;
             },
-            .done, .error_invalid, .error_headers_too_large, .error_too_large => return i,
+            .done, .error_invalid, .error_headers_too_large, .error_too_large => return parser.mark,
         }
     }
 
-    return i;
+    return parser.mark;
 }
 
 fn valid_trailers(trailers: []const u8, max_bytes: usize) bool {
@@ -571,6 +603,8 @@ pub fn reset(parser: *HttpParser) void {
     parser.extra_header_count = 0;
     parser.state = .method;
     parser.mark = 0;
+    parser.scan = 0;
+    parser.scan_work = 0;
     parser.content_length = 0;
     parser.chunk_length = 0;
     parser.body_length = 0;

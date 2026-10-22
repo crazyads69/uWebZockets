@@ -6,11 +6,11 @@
 | --- | --- | --- |
 | zslay | 0.2.1 | MIT |
 | libxev | 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf | MIT |
-| BoringSSL | dd73e69a4e86fa178a4d19033c691e9b42cc1088 | ISC-style and component licenses |
+| BoringSSL | 0.20261020.0 (d3bf4795ad5b79d646cddf2fec687da5b9b502db) | ISC-style and component licenses |
 | Fiat Crypto (via BoringSSL) | BoringSSL revision above | Apache-2.0 |
-| lsquic | 4.10.0 | MIT and bundled component licenses |
+| lsquic | 4.10.2 | MIT and bundled component licenses |
 | ls-qpack | 2.7.0 | MIT |
-| ls-hpack | 38ceca78054d4175ba3f6411b1b83ac5c485e542 | MIT |
+| ls-hpack | fda48e02491d865cce00612be8cc10c2622b8e55 | MIT |
 | libdeflate | 1.26 | MIT |
 | zlib | 1.3.2 | zlib License |
 | h1spec | f0a5650a20c575fbea0f7179a3a9cfa50f20ba6e | MIT |

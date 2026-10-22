@@ -1042,7 +1042,9 @@ pub const Router = struct {
     /// both match, so a hash collision falls through to the next probe
     /// instead of selecting the wrong route.
     fn find_static_node(self: *const Router, path: []const u8) ?u16 {
-        if (self.static_nodes.len == 0) return null;
+        // Dynamic patterns never populate the static index, so a root-only
+        // router can skip the path hash and empty-table probe.
+        if (self.static_nodes.len == 0 or self.node_count <= 1) return null;
 
         const hash = hash_path(path);
         const mask = self.static_nodes.len - 1;

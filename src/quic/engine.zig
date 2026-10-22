@@ -150,6 +150,12 @@ pub fn quic_engine(
 
         /// Allocates all stream, header, packet, and payload slabs.
         pub fn init() !Self {
+            // lsxpack field lengths are u16. Keep the shared HTTP/1 limit free
+            // to exceed this, but never allocate an HTTP/3 engine that cannot
+            // represent its own request-header storage.
+            if (stream_capacities.request_header_size > std.math.maxInt(u16)) {
+                return error.InvalidHttp3Capacity;
+            }
             var stream_pool = try StreamPool.init();
             errdefer stream_pool.deinit();
             var header_pool = try HeaderPool.init();

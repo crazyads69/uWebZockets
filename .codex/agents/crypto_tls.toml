@@ -42,7 +42,7 @@ checking, and proof.
 - `src/core/ktls.zig`: Linux kTLS crypto-struct layout (`AesGcm128`, asserted
   40 bytes) and key-material handling; the ULP and splice syscalls are owned by
   `transport_io`.
-- Vendor: pinned BoringSSL revision `dd73e69a`, compiled through
+- Vendor: pinned BoringSSL revision `d3bf4795`, compiled through
   `builds/vendor/boringssl.zig` from the package's generated source lists. Do not
   change the pin without the release-metadata procedure in `CONTRIBUTE.md`.
 - Tests: `src/tests/bleeding_edge_tests.zig` (crypto, kTLS size), C ABI TLS

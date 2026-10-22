@@ -3,6 +3,87 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [2.0.5] - 2026-10-22
+
+Patch release that refreshes the pinned C dependencies for the QPACK
+decoded-header amplification class, closes transport liveness defects, and
+tightens WebSocket and HTTP/3 field validation. Public APIs, C ABI layouts,
+route capacities, and default limits are unchanged.
+
+### Changed
+
+- BoringSSL advances to release `0.20261020.0`
+  (`d3bf4795ad5b79d646cddf2fec687da5b9b502db`), lsquic to `v4.10.2`
+  (`a9616720af78b9aab895145c1792d5305c480ae8`), and ls-hpack to
+  `fda48e02491d865cce00612be8cc10c2622b8e55`. The ls-hpack delta is
+  CMake-only. ls-qpack, libdeflate, zlib, and libxev remain at their current
+  pins; libxev `9ce8e8e` is the last revision compatible with Zig 0.16.0.
+- `build.zig.zon.{json,nix,txt}` and the recorded Nix hashes are regenerated.
+  `scripts/update_zon_files.sh` now accepts both the legacy single-`TMPDIR`
+  and current per-package zon2nix layouts.
+- `vendor/lsquic_overlay` is regenerated from the v4.10.2 tree and
+  `patches/lsquic_h3_message_error.patch`, so the stream-scoped header-error
+  behavior is preserved on the new release.
+- HTTP/3 activation (`listen_udp`) rejects `max_header_size` above 65535
+  because lsxpack field lengths are 16-bit. The shared HTTP/1.1 and HTTP/2
+  limit is unchanged and may still be raised above that value.
+
+### Fixed
+
+- Plaintext HTTP/1 static-file responses take file ownership before writing the
+  response head. The Linux direct-send path can no longer finish the head
+  without arming the completion that pumps the body, which previously left the
+  body unsent and held the connection slot until the idle timeout.
+- WebSocket upgrades read `Connection`, `Upgrade`, `Sec-WebSocket-Version`,
+  `Sec-WebSocket-Key`, and `Sec-WebSocket-Extensions` through the complete
+  request header view, including the extra slots used when
+  `max_header_count` exceeds the inline capacity. A duplicate key in those
+  slots is now rejected instead of being treated as absent.
+- HTTP/3 engine initialization rejects request header storage above the `u16`
+  lsxpack representation instead of trapping or truncating at the first
+  decoded field. The check runs before any QUIC slab is allocated.
+- A decoded HTTP/3 header section that exceeds the configured storage is
+  rejected with a stream-scoped `H3_MESSAGE_ERROR` rather than aborting every
+  request on the connection.
+- A direct batch flush that empties the write ring now settles WebSocket
+  backpressure at the batch boundary, so a paused producer is resumed even
+  when no write completion runs.
+- kqueue cancellation now flushes queued completions before canceling, so the
+  target callback owns its flag and a closed slot cannot return to the pool
+  before its read, write, and close completions drain. TCP, UDP, and client
+  teardown use the same submit-before-cancel rule as IOCP.
+- A timer tick that re-arms its own timer no longer queues the completion a
+  second time.
+- Repeated accept failures now arm a bounded one-shot retry instead of
+  returning `.rearm` immediately. A full descriptor table costs one accept
+  attempt per second instead of a busy loop and a warning flood.
+- The HTTP/1 parser keeps a monotonic delimiter scan cursor across reads.
+  Dribbled request lines, header blocks, chunk sizes, chunk extensions, and
+  trailers are scanned once instead of rescanning the accumulated prefix.
+- Rate-limit tables built empty use an open-addressed home probe, so established
+  keys and new keys with free capacity are found without a full-table scan.
+  Pre-seeded tables keep the exact legacy scan and eviction order.
+- Pub/sub publish holds a publish-depth frame and tombstones reentrant
+  unsubscribes until the outermost fan-out returns. A failed subscriber can no
+  longer shift rows, remap topic ids, or cause cross-topic delivery.
+- Pattern-only routers skip the static-route hash and its empty probe table.
+
+### Security
+
+- lsquic `v4.10.2` contains the QPACK decoded-header-set bound introduced in
+  `v4.9.0` and the follow-up header, parser, and allocation fixes through
+  October 2026. The issue is described in "Header Accordions: QPACK
+  amplification attacks against HTTP/3 servers"
+  (https://foxio.io/blog/header-accordions-qpack-amplification-attacks-against-http-3-servers):
+  repeated QPACK references could expand a small HEADERS frame into a much
+  larger retained header set. Upstream fixed lsquic in `v4.9.0` without a CVE;
+  this release moves the pin from `v4.10.0` to the tagged `v4.10.2` release.
+  The server already advertises a bounded field section, disables the QPACK
+  dynamic table, caps buffered header sets, and rejects an over-limit decoded
+  section on the request stream instead of the connection.
+- WebSocket upgrade validation no longer misses duplicate security-sensitive
+  fields that arrive in the extra header slots.
+
 ## [2.0.0] - 2026-10-20
 
 This release removes write-syscall amplification, batches WebSocket echoes,

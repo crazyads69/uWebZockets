@@ -221,6 +221,89 @@ test "http: reports the same consumed length when done is re-entered" {
     try std.testing.expectEqual(chunked_first, parser.consume(&p, &req, &chunked));
 }
 
+fn parser_terminal(state: parser.ParserState) bool {
+    return switch (state) {
+        .done, .error_invalid, .error_headers_too_large, .error_too_large => true,
+        else => false,
+    };
+}
+
+fn expect_byte_at_a_time_done(wire: []u8) !usize {
+    var p = parser.HttpParser{};
+    var req = Request{};
+    var consumed: usize = 0;
+    var length: usize = 1;
+    while (length <= wire.len) : (length += 1) {
+        consumed = parser.consume(&p, &req, wire[0..length]);
+    }
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqual(wire.len, consumed);
+    return p.scan_work;
+}
+
+fn expect_incomplete_then_done(wire: []u8, split: usize) !void {
+    // Chunked decoding compacts in place, so each split starts from a fresh
+    // copy instead of observing a previous run's rewritten body.
+    var storage: [512]u8 = undefined;
+    try std.testing.expect(wire.len <= storage.len);
+    @memcpy(storage[0..wire.len], wire);
+    const buffer = storage[0..wire.len];
+
+    var p = parser.HttpParser{};
+    var req = Request{};
+    _ = parser.consume(&p, &req, buffer[0..split]);
+    try std.testing.expect(!parser_terminal(p.state));
+
+    const consumed = parser.consume(&p, &req, buffer);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqual(buffer.len, consumed);
+}
+
+test "http: delimiter scan work is linear under byte-at-a-time delivery" {
+    var head = "GET /index.html HTTP/1.1\r\nHost: example.test\r\nUser-Agent: bench\r\nAccept: */*\r\n\r\n".*;
+    const head_work = try expect_byte_at_a_time_done(&head);
+    try std.testing.expect(head_work <= 4 * head.len + 32);
+
+    var chunked = "POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n5;name=value\r\nhello\r\n6\r\n world\r\n0\r\nX-Trailer: yes\r\n\r\n".*;
+    const chunked_work = try expect_byte_at_a_time_done(&chunked);
+    try std.testing.expect(chunked_work <= 4 * chunked.len + 32);
+}
+
+test "http: header terminator split at every position" {
+    var wire = "GET /split HTTP/1.1\r\nHost: example.test\r\nX-Test: yes\r\n\r\n".*;
+    var split: usize = 0;
+    while (split < wire.len) : (split += 1) {
+        try expect_incomplete_then_done(&wire, split);
+    }
+}
+
+test "http: chunk size CRLF split is resumable" {
+    var wire = "POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n".*;
+    const size_cr = std.mem.indexOf(u8, &wire, "5\r\n").? + 1;
+    try expect_incomplete_then_done(&wire, size_cr);
+    try expect_incomplete_then_done(&wire, size_cr + 1);
+    try expect_incomplete_then_done(&wire, size_cr + 2);
+}
+
+test "http: chunk extension CRLF split is resumable" {
+    var wire = "POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n5;name=value\r\nhello\r\n0\r\n\r\n".*;
+    const extension_start = std.mem.indexOf(u8, &wire, "5;name=value").? + 2;
+    const extension_cr = std.mem.indexOf(u8, &wire, "value\r\n").? + "value".len;
+    try expect_incomplete_then_done(&wire, extension_start);
+    try expect_incomplete_then_done(&wire, extension_cr);
+    try expect_incomplete_then_done(&wire, extension_cr + 1);
+    try expect_incomplete_then_done(&wire, extension_cr + 2);
+}
+
+test "http: chunk trailer terminator split is resumable" {
+    var wire = "POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: yes\r\n\r\n".*;
+    const trailer_end = std.mem.lastIndexOf(u8, &wire, "\r\n\r\n").?;
+    var split: usize = trailer_end;
+    while (split <= trailer_end + 3) : (split += 1) {
+        try expect_incomplete_then_done(&wire, split);
+    }
+}
+
 test "http: framing conflict wins over an oversized content length" {
     var p = parser.HttpParser{};
     var req = Request{};

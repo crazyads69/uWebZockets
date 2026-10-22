@@ -413,6 +413,50 @@ test "rate limit: keys follow function, header hash, then constant precedence" {
     try std.testing.expectEqual(@as(u64, 4), missing_buckets[0].key);
 }
 
+test "rate limit: probe-ready table inserts and finds distinct keys" {
+    var buckets = [_]middleware.RateLimitBucket{.{}} ** 64;
+    var limiter = middleware.rate_limit(std.testing.io, .{
+        .rate_per_second = 1000,
+        .burst = 4,
+        .key_header = "x-tenant",
+    }, &buckets);
+    try std.testing.expect(limiter.probe_ready);
+
+    var keys: [32][24]u8 = undefined;
+    var lengths: [32]usize = undefined;
+    for (0..32) |index| {
+        const key = try std.fmt.bufPrint(&keys[index], "tenant-{d}", .{index});
+        lengths[index] = key.len;
+        var request = header_request("x-tenant", key);
+        var capture = ResponseCapture{};
+        try std.testing.expectEqual(
+            support.radix.MiddlewareResult.continue_dispatch,
+            try run_rate_limit(&limiter, &request, &capture),
+        );
+    }
+
+    var occupied: usize = 0;
+    for (buckets) |bucket| {
+        if (bucket.last_refill_ns != 0) occupied += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 32), occupied);
+
+    for (0..32) |index| {
+        const key = keys[index][0..lengths[index]];
+        var request = header_request("x-tenant", key);
+        var capture = ResponseCapture{};
+        try std.testing.expectEqual(
+            support.radix.MiddlewareResult.continue_dispatch,
+            try run_rate_limit(&limiter, &request, &capture),
+        );
+    }
+    var occupied_after: usize = 0;
+    for (buckets) |bucket| {
+        if (bucket.last_refill_ns != 0) occupied_after += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 32), occupied_after);
+}
+
 test "rate limit: fnv1a_64 pins the standard vectors" {
     try std.testing.expectEqual(@as(u64, 0xcbf29ce484222325), middleware.fnv1a_64(""));
     try std.testing.expectEqual(@as(u64, 0xaf63dc4c8601ec8c), middleware.fnv1a_64("a"));
@@ -429,6 +473,7 @@ test "rate limit: a full table evicts the oldest bucket and stays bounded" {
         .burst = 16,
         .key_header = "x-tenant",
     }, &buckets);
+    try std.testing.expect(!limiter.probe_ready);
 
     var request = header_request("x-tenant", "tenant-c");
     var capture = ResponseCapture{};

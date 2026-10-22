@@ -22,6 +22,10 @@
     "connection_specific_header",
     "pseudo_header_after_regular"
   ],
+  "oversized_qpack": {
+    "field_count": 60,
+    "value_bytes": 300
+  },
   "soak": {
     "malformed_requests": 300
   },

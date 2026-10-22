@@ -4,9 +4,9 @@
 - Date: 2026-09-26
 - Deciders: QUIC/HTTP3 engineering
 - Pinned dependency: litespeedtech/lsquic commit
-  `d5929af7cec6fd74f1cfea2cb1c07c27ce9102b1` (LSQUIC_MAJOR_VERSION 4,
-  LSQUIC_MINOR_VERSION 10, LSQUIC_PATCH_VERSION 0), Zig package hash
-  `N-V-__8AABlSZwC2bZHS0kM4Fi6Cz3MPxNN3TFeim4QI6R9A`.
+  `a9616720af78b9aab895145c1792d5305c480ae8` (LSQUIC_MAJOR_VERSION 4,
+  LSQUIC_MINOR_VERSION 10, LSQUIC_PATCH_VERSION 2), Zig package hash
+  `N-V-__8AAH6VZwAKiOkYrd_YSpAX_LDuhK6AYwKdPAW-Yg-d`.
 
 ## Context
 
