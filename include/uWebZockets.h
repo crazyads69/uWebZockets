@@ -11,7 +11,7 @@ extern "C" {
 
 #define UWZ_VERSION_MAJOR 2
 #define UWZ_VERSION_MINOR 0
-#define UWZ_VERSION_PATCH 5
+#define UWZ_VERSION_PATCH 6
 
 /* Versioned fixed capacities of the C ABI. */
 #define UWZ_MAX_ROUTES 64

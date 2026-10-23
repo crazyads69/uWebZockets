@@ -46,6 +46,8 @@ pub fn build(
         .files = &sources,
         .flags = sanitizers.instrumented_flags(b, &.{
             "-std=gnu11",
+            "-ffunction-sections",
+            "-fdata-sections",
             // Clang derives the AVX-512 and VPCLMULQDQ intrinsics from the
             // evex512 target feature, which these function target attributes
             // do not request. Disable those paths and let runtime dispatch

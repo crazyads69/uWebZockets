@@ -43,7 +43,7 @@ pub fn build(
     module.addCSourceFiles(.{
         .root = root,
         .files = &sources,
-        .flags = sanitizers.instrumented_flags(b, &.{"-std=gnu11"}, sanitizer),
+        .flags = sanitizers.instrumented_flags(b, &.{ "-std=gnu11", "-ffunction-sections", "-fdata-sections" }, sanitizer),
     });
     return .{
         .include_root = root,

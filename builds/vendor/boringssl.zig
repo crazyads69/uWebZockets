@@ -171,6 +171,8 @@ fn language_flags(
         "-fvisibility=hidden",
         "-fno-exceptions",
         "-fno-rtti",
+        "-ffunction-sections",
+        "-fdata-sections",
     }, sanitizer);
     var flags: std.ArrayList([]const u8) = .empty;
     flags.appendSlice(b.allocator, base) catch @panic("out of memory");

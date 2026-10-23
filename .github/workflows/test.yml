@@ -128,6 +128,9 @@ jobs:
         working-directory: tests/package_consumer
         run: nix develop "path:../.." -c zig build check -Doptimize=ReleaseSafe --summary all
 
+      - name: Compile a clean package consumer
+        run: nix develop "path:." -c sh scripts/check_package_paths.sh
+
   fuzz:
     name: Fuzz smoke
     runs-on: ubuntu-24.04

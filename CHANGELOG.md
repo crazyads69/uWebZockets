@@ -3,6 +3,41 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [2.0.6] - 2026-10-23
+
+Patch release that makes the source package self-contained for downstream
+consumers and lets the linker discard unused vendor functions. Public APIs, C
+ABI layouts, route capacities, runtime behavior, and wire formats are unchanged.
+
+### Added
+
+- `scripts/check_package_paths.sh` archives the tracked tree, fetches it with
+  `zig fetch` so the package manager applies `build.zig.zon` `.paths`, and
+  compiles the downstream package consumer from that copy. The Test and Publish
+  workflows run it, so a path omitted from the package fails before a release
+  instead of during a downstream fetch.
+
+### Changed
+
+- `build.zig.zon` includes `vendor/libxev_overlay` in `.paths`. A clean
+  `zig fetch` now carries the auditable IOCP accept overlay, so a downstream
+  build no longer fails its first cache check with
+  `vendor/libxev_overlay/src/backend/iocp.zig` `FileNotFound`.
+- BoringSSL, lsquic, libdeflate, and zlib compile with
+  `-ffunction-sections` and `-fdata-sections`. The existing `--gc-sections`
+  link can then discard unused functions inside objects pulled in for another
+  symbol. The flags change code layout only; no source, wire byte, or protocol
+  path moves.
+- The Publish workflow creates a GitHub release only when the pushed tag equals
+  `v` plus the `build.zig.zon` version. Downstream pin tags still run the full
+  compliance and verification jobs, but no longer fail release creation for a
+  missing changelog section. A plain `vX.Y.Z` tag that does not match the
+  manifest fails the metadata check.
+
+### Security
+
+- No security-relevant behavior changed.
+
 ## [2.0.5] - 2026-10-22
 
 Patch release that refreshes the pinned C dependencies for the QPACK

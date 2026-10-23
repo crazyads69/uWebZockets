@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "2.0.5",
+    .version = "2.0.6",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -78,6 +78,7 @@
         "patches",
         "scripts/check_static_archive.sh",
         "vendor/lsquic_overlay",
+        "vendor/libxev_overlay",
         "flake.nix",
         "flake.lock",
     },

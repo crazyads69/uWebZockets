@@ -180,7 +180,7 @@ pub fn build(
     var flags: std.ArrayList([]const u8) = .empty;
     flags.appendSlice(b.allocator, sanitizers.instrumented_flags(
         b,
-        &.{"-std=gnu11"},
+        &.{ "-std=gnu11", "-ffunction-sections", "-fdata-sections" },
         sanitizer,
     )) catch @panic("out of memory");
     for (definitions) |define| {

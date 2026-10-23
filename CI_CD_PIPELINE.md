@@ -69,7 +69,14 @@ zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
 zig build oss-fuzz-objects -Doptimize=ReleaseSafe --summary all
 zig build lib -Doptimize=ReleaseFast --summary all
 (cd tests/package_consumer && zig build check -Doptimize=ReleaseSafe)
+sh scripts/check_package_paths.sh
 ```
+
+`scripts/check_package_paths.sh` reconstructs the package from the `.paths`
+entries in `build.zig.zon`, fetches that copy with `zig fetch`, and compiles the
+same downstream fixture from the fetched package. The path dependency above
+exercises the module; the clean-package check also proves the manifest carries
+every file the build reads.
 
 Debug tests cover parser limits, malformed framing, partial reads and writes,
 pool ownership, router method behavior, handshake validation, close codes,

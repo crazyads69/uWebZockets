@@ -103,8 +103,9 @@ barrier, and `listen_udp` plus `init_http3` for HTTP/3.
 Pin a tag or full commit rather than a moving branch so dependency resolution
 stays reproducible, and use the minimum Zig release the package declares
 (0.16.0). The `tests/package_consumer` fixture compiles this exact snippet in
-CI. [Operations](docs/operations.md#use-as-a-zig-dependency) covers path
-dependencies, archive linking, and the C ABI contract.
+CI, and `scripts/check_package_paths.sh` repeats it from a clean `zig fetch` of
+the package. [Operations](docs/operations.md#use-as-a-zig-dependency) covers
+path dependencies, archive linking, and the C ABI contract.
 
 ## Shared-nothing by default
 
@@ -305,7 +306,7 @@ normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v2.0.5  ready in
+summary before the first accepting listener: `µWebZockets v2.0.6  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than

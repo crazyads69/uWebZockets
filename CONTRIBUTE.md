@@ -102,6 +102,7 @@ Run all relevant checks before opening a pull request:
 zig fmt --check build.zig src examples tests fuzz
 sh scripts/check_conventions.sh
 sh scripts/check_release_version.sh
+sh scripts/check_package_paths.sh
 zig build test --summary all
 zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
 zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all
@@ -200,6 +201,7 @@ When bumping lsquic, regenerate `vendor/lsquic_overlay`:
    Autobahn, h1spec, and HTTP/3 cross-implementation checks on the release
    commit.
 6. Tag the final commit as `v<version>` and push the tag.
-7. Confirm the release notes render the changelog and the tag resolves through
-   `zig fetch` before announcing the release. Releases publish source only;
-   there are no archives or `SHA256SUMS` to review.
+7. Confirm the release notes render the changelog, `scripts/check_package_paths.sh`
+   passes on the release commit, and the tag resolves through `zig fetch` before
+   announcing the release. Releases publish source only; there are no archives
+   or `SHA256SUMS` to review.

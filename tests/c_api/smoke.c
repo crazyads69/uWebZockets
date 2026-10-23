@@ -95,7 +95,7 @@ int main(void)
     size_t sent = 0;
     unsigned int attempt;
 
-    if (strcmp(uwz_version(), "2.0.5") != 0)
+    if (strcmp(uwz_version(), "2.0.6") != 0)
         return 1;
     if (strcmp(uwz_error_name(UWZ_OK), "ok") != 0)
         return 2;
