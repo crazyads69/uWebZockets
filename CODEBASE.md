@@ -412,7 +412,18 @@ does not instrument Zig code or execute the complete C ABI test graph.
 The Nix flake pins Nixpkgs 26.05, seeds Zig package dependencies
 deterministically, and defines native and musl compile checks. `build.zig.zon`
 pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and zlib
-by immutable URL or commit plus Zig package hash. A downstream project can pin
+by immutable URL or commit plus Zig package hash.
+
+libxev provenance follows the [fork policy](docs/libxev_fork.md). As of
+2026-10-24, `build.zig.zon` still pins upstream `mitchellh/libxev` at
+`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, and the Windows IOCP `AcceptEx`
+fix remains the [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md)
+overlay. [ADR 0005](docs/adr/0005-libxev-fork.md) selects
+`farbenbuilds/libxev` as the maintained fork: the next libxev dependency update
+moves the pin to a full 40-hex fork commit on `uwz/zig-0.16`, carries the fix
+as a ledgered `uwz` commit, and removes the overlay.
+
+A downstream project can pin
 an exact checkout at a local path without fetching the repository's
 `vendor/h1spec` compliance submodule. Releases are source tags: the repository
 publishes no per-platform binary archives, and consumers use `zig fetch` so the

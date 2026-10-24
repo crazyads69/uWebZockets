@@ -227,6 +227,30 @@ runner generates a one-run localhost certificate in a private temporary
 directory and deletes its key during cleanup, so clean checkouts do not depend
 on ignored developer certificates.
 
+## libxev provenance
+
+The current `build.zig.zon` pin is still upstream `mitchellh/libxev` at
+`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, and
+`scripts/check_vendor_overlay.sh` is the overlay gate for the Windows IOCP
+`AcceptEx` patch ([ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md)).
+Migration to the maintained fork is pending.
+
+[ADR 0005](docs/adr/0005-libxev-fork.md) selects
+<https://github.com/farbenbuilds/libxev>. After the next libxev dependency
+update, the manifest pins a full 40-hex fork commit and CI verifies the libxev
+URL, revision, Zig hash, and Nix hash across all four views. Regeneration alone
+is not proof because `scripts/update_zon_files.sh` can skip when zon2nix or nix
+is absent; lint adds that comparison. A fork provenance check replaces the
+libxev half of `scripts/check_vendor_overlay.sh` and resolves the exact commit
+at the fork, rejecting a branch, tag, or short SHA. Lint also runs the
+stale-phrase grep. Before release, resolve the pinned commit from a second
+machine and against the retained archive or local bare mirror. Release and
+benchmark provenance record the fork commit and its upstream base; tags are
+never authoritative. Fork `main` and `uwz/zig-0.16` require branch protection
+before the first pin. Until the migration lands, the upstream pin and overlay
+gate remain the release contract. The normative procedure is
+[docs/libxev_fork.md](docs/libxev_fork.md).
+
 ## Performance regression
 
 The benchmark workflow checks the pull request and its `main` base out into
@@ -300,7 +324,8 @@ the same tag.
 - Run the ClusterFuzzLite bad-build check and bounded batch for all five
   OSS-Fuzz targets.
 - Run Autobahn and h1spec compliance.
-- Verify third-party revisions and licenses.
+- Verify third-party revisions and licenses. For a libxev fork pin, resolve the
+  pinned commit from a second machine and against the retained archive.
 - Create and push `v<version>` only after the release commit is final.
 - Confirm the release notes render the changelog and the tag resolves through
   `zig fetch`; there are no archives or checksums to review.

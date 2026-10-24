@@ -22,7 +22,10 @@ focused.
 4. `integrator` takes the architect plan, developer report, and reviewer
    findings; checks ownership boundaries, scope, required commands, and the
    final diff; then prepares the delivery summary. Integration does not
-   override project gates or silently discard findings.
+   override project gates or silently discard findings. Every opened or
+   updated pull request is assigned to its owner and carries at least one
+   existing repository label; an unassigned or unlabeled pull request is not
+   ready for review.
 
 The root agent owns orchestration and the final response. No phase is complete
 until its output is returned. Apply relevant existing skills from

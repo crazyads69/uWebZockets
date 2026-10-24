@@ -173,7 +173,11 @@ socket takeover is a later milestone.
 it `.until_done`. All completions are inline members of their owning connection,
 server, transport, or engine; none is heap-allocated, and none outlives the
 storage it borrows. Only `loop.zig` inspects the libxev backend; every other
-module cancels through the backend-aware shim.
+module cancels through the backend-aware shim. libxev provenance follows
+[libxev_fork.md](libxev_fork.md): the maintained downstream fork becomes the
+source of truth when the next dependency update migrates the pin, while the
+[ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md) overlay remains
+authoritative until then.
 
 `src/core/xev.zig` re-exports libxev's runtime-selectable API and registers it
 as the package's `xev` import. On Linux the loop probes io_uring first and

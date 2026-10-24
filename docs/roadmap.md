@@ -75,8 +75,10 @@ claim.
 - Quiet-host evidence for the v2.0.0 pipeline, WebSocket, `json-comp`, and
   `latency-1m` targets, archived under the v1.9.0 evidence contract.
 - Receive-side `UDP_GRO` after the loop exposes ancillary segment sizes.
-- libxev IOCP accept overlay removal after upstream issue #252 is fixed and a
-  release contains the fix.
+- libxev IOCP `AcceptEx` patch migration to the `farbenbuilds/libxev`
+  `uwz/zig-0.16` integration branch and overlay removal in the next libxev
+  dependency update ([ADR 0005](adr/0005-libxev-fork.md),
+  [policy](libxev_fork.md)).
 - Cross-process `SO_REUSEPORT` / systemd socket-activation handoff.
 - Decisions on per-listener certificates, a bounded TRACE reflection example,
   and an optional `uwz_app_listen_all` C entry point.
@@ -134,16 +136,20 @@ defects, in order of encounter.
    and clear the flags for completions whose callback will never fire.
 
 The 1.9.0 work carries the upstream accept fix as an auditable overlay rather
-than a fork or a package-cache edit, and it submits queued IOCP completions
-before canceling them so the target callback clears `read_active`/`is_writing`.
+than a package-cache edit, and it submits queued IOCP completions before
+canceling them so the target callback clears `read_active`/`is_writing`.
 `windows.yml` now runs the full test suite on `windows-2025` in addition to the
 compile gates, and a regression test closes a queued write before submission
 and asserts that the pool slot returns. The decision, patch, and rollback path
 are recorded in [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md).
-The TLS cluster test plumbing already binds `getsockname` and `SO_RCVTIMEO`
-through ws2_32, so those tests execute rather than skip. Windows remains
-compile-only in the support claim until the native job is green for the release
-commit.
+[ADR 0005](adr/0005-libxev-fork.md) now selects `farbenbuilds/libxev` as the
+maintained fork, so overlay retirement follows the `uwz/zig-0.16` integration
+branch at the next libxev dependency update rather than an upstream release;
+[libxev_fork.md](libxev_fork.md) is the policy. The overlay and patch remain
+authoritative until that migration lands. The TLS cluster test plumbing already
+binds `getsockname` and `SO_RCVTIMEO` through ws2_32, so those tests execute
+rather than skip. Windows remains compile-only in the support claim until the
+native job is green for the release commit.
 
 ## Near-term direction
 

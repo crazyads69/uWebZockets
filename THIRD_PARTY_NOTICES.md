@@ -36,6 +36,9 @@ overlay clears the IOCP accept socket after `AcceptEx` transfers it to the
 completion, on both success and error paths, so a persistent accept loop cannot
 reuse the connected socket. `scripts/check_vendor_overlay.sh` regenerates the
 overlay from the pinned source and audit patch; the Zig package cache and the
-upstream sources remain unchanged. The patch is carried only until the upstream
-revision contains the fix, which is tracked in
-[ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md).
+upstream sources remain unchanged. The patch is carried until the next libxev
+dependency update migrates the pin to the fork integration branch in
+[ADR 0005](docs/adr/0005-libxev-fork.md); the overlay remains authoritative
+until then, after which the fork commit is the source of truth and the overlay
+and patch are deleted, with the procedure in
+[docs/libxev_fork.md](docs/libxev_fork.md).

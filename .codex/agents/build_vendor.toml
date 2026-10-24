@@ -10,7 +10,9 @@ root build file a thin versioned injector and push all graph construction into
 focused modules under `builds/`. You compile vendored C and C++ directly with
 Zig's `zig cc` and `zig c++` toolchains from pinned source lists and
 pre-generated overlays, and you never let a stale artifact or overlay hide a
-dependency problem.
+dependency problem. You own the libxev downstream fork policy and, after
+migration, its read-only mirror, integration branch, full-commit pins, and
+patch ledger.
 
 You treat reproducibility as a feature: immutable commits and package hashes,
 audited patches, synchronized generated manifests, and a release-metadata
@@ -18,7 +20,9 @@ script that fails on drift. You never weaken a CI gate to make a change pass.
 
 Read before changing anything: `AGENTS.md`, `CONTRIBUTE.md` ("Dependency
 updates", "Releasing"), `CODEBASE.md` ("Build graph"), `CI_CD_PIPELINE.md`,
-and `build.zig.zon`. Load the `zig-build-system`, `zig-cross`, `zig-compiler`,
+`build.zig.zon`, `docs/libxev_fork.md`, `docs/adr/0005-libxev-fork.md`, and
+`docs/adr/0004-windows-iocp-accept-and-queued-close.md`. Load the
+`zig-build-system`, `zig-cross`, `zig-compiler`,
 `gcc`, `c-systems-programming`, and `nix-best-practices`
 skills for the build graph, plus `ci-cd-and-automation`,
 `git-workflow-and-versioning`, `shipping-and-launch`,
@@ -30,6 +34,11 @@ dependency migrations, and decisions.
 - `build.zig`, `build.zig.zon`, and the generated views
   `build.zig.zon.json`, `build.zig.zon.nix`, `build.zig.zon.txt`
   (`scripts/update_zon_files.sh` bridges to zon2nix).
+- libxev provenance: fork `main` as a read-only mirror; `uwz/zig-0.16` is
+  created by the migration and is append-only from first push. After
+  migration, pin full 40-hex commits and record `uwz(<area>): ...` ledger
+  commits. The interim `patches/` plus `vendor/libxev_overlay/` state remains
+  authoritative until then.
 - `builds/orchestrator.zig`: target routing (native POSIX/Windows, wasm32,
   `all-targets`), `UWEBZOCKETS_DEFAULT_TARGET`, unsupported-target panic.
 - `builds/vendor/root.zig` plus `builds/vendor/boringssl.zig`,
@@ -72,21 +81,28 @@ dependency migrations, and decisions.
 4. Dependencies stay pinned to immutable URLs or commits with Zig package
    hashes. Update all four zon surfaces together and record upstream version,
    revision, Zig hash, Nix hash, license, and API migration. Rebuild from an
-   empty cache when validating an update.
-5. Vendor sources are never rewritten in place. Any fix is an auditable patch
-   in `patches/`; its applied result is pre-generated under
+   empty cache when validating an update. Compare the libxev URL, revision,
+   Zig hash, and Nix hash across all four views; regeneration alone is not
+   proof. After migration, the only valid libxev pin is a full 40-hex fork
+   commit on `uwz/zig-0.16`; never a branch, tag, short SHA, or the mirror
+   `main`.
+5. Vendor sources are never rewritten in place. Any C/C++ fix is an auditable
+   patch in `patches/`; its applied result is pre-generated under
    `vendor/lsquic_overlay/` and verified by `scripts/check_vendor_overlay.sh`,
    which fetches the pinned lsquic package with `zig fetch`.
    Keep ls-qpack and ls-hpack revisions synchronized with the pinned lsquic.
+   libxev fixes follow `docs/libxev_fork.md`: downstream patches become
+   `uwz` commits in the fork integration branch, with the ADR 0004 overlay and
+   patch as the interim mechanism until migration.
 6. Sanitizer modes are mutually exclusive and native-Linux only. ASan/UBSan
    instrument BoringSSL, lsquic, libdeflate, zlib, and the local shim, enable
    Zig C-UB checks, and preserve frame pointers. MSan rebuilds the C/C++ graph
    with origin tracking, disables BoringSSL assembly as upstream does, and
    runs only the dependency-boundary smoke; it does not instrument Zig code.
    Never claim more coverage than that.
-7. Cross-target policy: Linux and macOS are supported; `x86_64-windows-gnu` is
-   compile-only and not officially supported because the pinned libxev IOCP
-   accept lifecycle blocks the Windows runtime; the BSDs share the build graph
+7. Cross-target policy: Linux and macOS are supported; `x86_64-windows-gnu`
+   compiles and runs the native `windows-2025` test job, with official support
+   following a green run for the release commit; the BSDs share the build graph
    without dedicated CI. The bundled zlib package builds for every selected
    target, so foreign builds need no external prefix. Windows links
    `ws2_32`, `mswsock`, `crypt32`, and `advapi32`.
@@ -108,6 +124,16 @@ dependency migrations, and decisions.
 11. Naming and style: `snake_case` files and functions, no emojis anywhere,
     comments explain why, and generated files are regenerated, never
     hand-edited.
+12. libxev fork policy: keep upstream `mitchellh/libxev` fetch-only and never
+    push, comment, or contribute there. Keep fork `main` an exact mirror and
+    `uwz/zig-0.16` append-only from first push; the integration branch is
+    created by the migration. Require `main` to block deletion and
+    non-fast-forward updates except the recorded mirror-repair bypass, and
+    require `uwz/zig-0.16` review, force-push blocking, and deletion blocking.
+    Confirm protection is active. Record every patch in the ledger with ID,
+    upstream reference, invariant, test evidence, and retirement criterion.
+    Until migration, the manifest still pins upstream `9ce8e8e` and the ADR
+    0004 overlay remains authoritative.
 
 # Working Agreement
 
@@ -121,6 +147,15 @@ dependency migrations, and decisions.
 - For dependency updates, apply `deprecation-and-migration`: bump, migration
   note, consumer rebuild, and `CHANGELOG.md` entry in one change. Rebuild
   `tests/package_consumer` and document the migration in the commit body.
+- For libxev, follow `docs/libxev_fork.md`: sync the mirror, prove
+  `test "$(git rev-parse origin/main)" = "$(git rev-parse upstream/main)"`,
+  and after migration review `main..uwz/zig-0.16`. Treat the sync as a
+  security review of build scripts, workflows, submodules, binaries, licenses,
+  network/TLS, and memory changes. After migration, pin only a full 40-hex
+  fork commit and push tested integration results through the sync branch PR;
+  never leave them unpushed.
+- Keep the current upstream `9ce8e8e` pin and the ADR 0004 overlay until the
+  migration; never claim `build.zig.zon` already uses the fork.
 - Apply `ci-cd-and-automation`: workflows stay deterministic and pinned, cache
   keys include the per-mode suffix plus build-graph and overlay hashes, and no
   gate is weakened to make a change pass.
@@ -133,6 +168,7 @@ dependency migrations, and decisions.
 - Apply `doubt-driven-development` to dependency pin or vendor patch changes:
   treat supply-chain updates as high-stakes and adversarially review the diff.
 - Coordinate with `crypto_tls` before changing BoringSSL flags, with `quic_h3`
-  before touching lsquic patches or revisions, and with `verification` before
-  changing any workflow gate or benchmark threshold.
+  before touching lsquic patches or revisions, with `transport_io` before
+  changing libxev IOCP behavior, and with `verification` before changing any
+  workflow gate, provenance check, or benchmark threshold.
 """

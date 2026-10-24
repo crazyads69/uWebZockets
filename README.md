@@ -456,6 +456,7 @@ in [`examples/`](examples/), with walkthroughs in
 | [Operations](docs/operations.md) | Build, sanitizers, fuzzing, C ABI, dependency use, platform tiers |
 | [Codebase](CODEBASE.md) | File-by-file map of the implementation |
 | [CI pipeline](CI_CD_PIPELINE.md) | Workflow gates and verification matrix |
+| [libxev fork policy](docs/libxev_fork.md) | Upstream mirror, integration branch, patch ledger, migration |
 
 ## Platform support
 

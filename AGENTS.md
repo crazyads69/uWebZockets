@@ -124,6 +124,38 @@ Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
 - Target libraries: BoringSSL, lsquic, libdeflate, and zlib.
 - **Compilation Strategy**: Compile every C/C++ dependency with Zig's own `zig cc` and `zig c++` toolchain from native source lists under `builds/`. Keep generated inputs pre-generated under `vendor/`; never reintroduce CMake, Ninja, Go, Perl, Python, `patch`, or system zlib as build requirements.
 
+## libxev Fork Policy
+
+- The maintained downstream fork is <https://github.com/farbenbuilds/libxev>.
+  Upstream `mitchellh/libxev` is fetch-only: never push, open issues or pull
+  requests, comment, or submit patches there.
+- Fork `main` is an exact read-only mirror; never build or pin it. The
+  integration branch is created by the migration. After migration, downstream
+  work will live on `uwz/zig-0.16`, based on the newest upstream commit
+  compatible with Zig 0.16.0, with auditable `uwz(<area>): ...` patch commits
+  in the ledger.
+- After migration, pin only a full 40-hex fork commit in `build.zig.zon`,
+  update all four zon views together, and rebuild from an empty cache. Compare
+  the libxev URL, revision, Zig hash, and Nix hash across all four views;
+  regeneration alone is not proof. Branches, tags, and short SHAs are never
+  authoritative.
+- `uwz/zig-0.16` is append-only from first push. `main` blocks deletion and
+  non-fast-forward updates except the recorded maintainer mirror-repair
+  bypass; `uwz/zig-0.16` requires review and blocks force-push and deletion.
+  The repair is the sole permitted bypass and protection must be confirmed
+  active afterward.
+- Every sync is a security review: prove
+  `test "$(git rev-parse origin/main)" = "$(git rev-parse upstream/main)"`.
+  After migration, review `main..uwz/zig-0.16`, and inspect build scripts,
+  workflows, submodules, binaries, licenses, network/TLS, and memory changes
+  with build/vendor, transport/runtime, and verification.
+- The current manifest still pins upstream `9ce8e8e` and the
+  [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md) Windows
+  IOCP overlay remains authoritative until the migration. The integration
+  branch does not exist before that migration.
+- Canonical policy: [docs/libxev_fork.md](docs/libxev_fork.md). Decision:
+  [ADR 0005](docs/adr/0005-libxev-fork.md).
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
@@ -164,6 +196,9 @@ Follow this sequence:
 4. **Integrator** resolves ownership overlaps, routes findings back to the
    developer, checks the final combined diff and required verification, and
    prepares the delivery summary. Re-review changed work before integration.
+   When opening or updating a pull request, assign its owner and apply at least
+   one existing repository label; an unassigned or unlabeled pull request is
+   not ready for review.
 
 Do not advance past a phase while its required output is missing. Keep edits
 to shared files serialized; parallelize only independent assignments. The

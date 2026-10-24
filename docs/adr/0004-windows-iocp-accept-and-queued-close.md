@@ -1,6 +1,6 @@
 # 0004. Windows IOCP accept lifecycle and queued-close completion policy
 
-- Status: Accepted
+- Status: Accepted; superseded in part by [ADR 0005](0005-libxev-fork.md)
 - Date: 2026-10-19
 - Deciders: transport/runtime, build/vendor, verification
 - Release: 1.9.0
@@ -13,8 +13,10 @@ socket but does not clear `op.accept.internal_accept_socket`. A persistent
 accept loop re-arms the completion, `start_completion` calls `AcceptEx` on the
 already-connected socket, Winsock returns `WSAEINVAL (10022)`, and libxev
 panics while mapping the unmapped code. The pinned revision
-`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` is still upstream `main`; no fixed
-revision or merged pull request exists.
+`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` was upstream `main` when this ADR
+was accepted; upstream `main` is now
+`451a2bc03644c2b70fb28a808313d12989bfa8e3` ("update to Zig 0.17", upstream
+PR #249). No fixed revision or merged pull request exists for issue 252.
 
 The second defect is in this repository. `Completion.state()` maps both
 `.adding` (queued, not yet submitted) and `.active` to `.active`. When a
@@ -60,6 +62,10 @@ The upstream report is
   the defect and Windows runtime coverage cannot make progress without the fix.
 - **Fork libxev and pin the fork**: rejected because it hides the change in a
   second repository and makes the dependency views harder to audit.
+  - 2026-10-24: superseded in part by [ADR 0005](0005-libxev-fork.md), which
+    adopts `farbenbuilds/libxev` under a full-commit pin and a patch ledger.
+    The overlay decision in this ADR remains in force until the migration
+    lands.
 - **Patch the fetched package in place**: rejected because the cache is shared,
   content-addressed, and not part of a clean-clone build.
 - **Submit before every close on every backend**: rejected as unnecessary
@@ -76,9 +82,15 @@ The upstream report is
   never passes a connected socket back to `AcceptEx`.
 - A queued read or write canceled by the same callback that created it can no
   longer strand a pool slot.
-- When upstream merges the fix, delete the overlay and patch, move the pin to
-  the fixed revision, update every dependency view and hash, and rerun the
-  native Windows job. ADR 0004 then becomes historical.
+- Historical trigger (2026-10-19): when upstream merges the fix, delete the
+  overlay and patch, move the pin to the fixed revision, update every
+  dependency view and hash, and rerun the native Windows job. ADR 0004 then
+  becomes historical. The 2026-10-24 note below and ADR 0005 now govern
+  retirement.
+- 2026-10-24: [ADR 0005](0005-libxev-fork.md) adopts the maintained fork. The
+  overlay remains in force until the migration lands, and retirement now
+  follows the fork `uwz/zig-0.16` integration branch rather than an upstream
+  release.
 - Windows is promoted from compile-only to runtime-supported only when the
   native job is green for the release commit.
 

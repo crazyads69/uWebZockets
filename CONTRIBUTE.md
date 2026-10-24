@@ -91,8 +91,13 @@ project overrides take precedence over vendored defaults.
   (`x86_64-windows-gnu` / MinGW ABI), FreeBSD, NetBSD, OpenBSD, and
   DragonFlyBSD. Ensure platform-specific I/O branches remain isolated to
   transport abstractions (POSIX and Windows IOCP via `libxev`).
-- Submit dependency fixes to the upstream project rather than rewriting
-  vendored files without an auditable patch.
+- Submit non-libxev dependency fixes to the upstream project rather than
+  rewriting vendored files without an auditable patch. libxev is the
+  exception: the maintained fork relationship is policy now, but the
+  `uwz/zig-0.16` integration branch is created by the migration. Until then
+  keep the upstream `9ce8e8e` pin and ADR 0004 IOCP overlay, and never send
+  patches to `mitchellh/libxev`; see
+  [docs/libxev_fork.md](docs/libxev_fork.md).
 
 ## Local checks
 
@@ -152,6 +157,9 @@ malformed and capacity-exhaustion cases.
 - Document API, limit, configuration, or compatibility changes.
 - Separate measured performance results from estimates.
 - Note breaking changes explicitly in the pull request and changelog.
+- Assign the pull request to its owner and apply at least one existing
+  repository label before requesting review. An unassigned or unlabeled pull
+  request is not ready for review.
 - Keep commits concise and follow
   [.github/COMMIT_CONVENTION.md](.github/COMMIT_CONVENTION.md).
 
@@ -167,6 +175,38 @@ For Zig dependencies, update all generated package views together:
 Record the upstream version, immutable URL or revision, Zig package hash, Nix
 hash, license, and any API migration. Rebuild from an empty Zig/vendor cache so
 a stale artifact cannot hide a dependency problem.
+
+### libxev fork updates
+
+The maintained downstream fork is <https://github.com/farbenbuilds/libxev>,
+and that relationship is policy now. The `uwz/zig-0.16` integration branch
+does not exist until the migration; until then the upstream `9ce8e8e` pin and
+the ADR 0004 IOCP overlay remain authoritative. Upstream `mitchellh/libxev` is
+fetch-only: do not push, open issues or pull requests, comment, or send patches
+there.
+
+After migration, the update procedure is:
+
+1. Synchronize the fork mirror with a fast-forward merge, push it, then
+   `git fetch origin main` and prove
+   `test "$(git rev-parse origin/main)" = "$(git rev-parse upstream/main)"`.
+   Record any mirror-repair incident.
+2. Fetch `origin/uwz/zig-0.16`, create `sync/zig-0.16-YYYYMMDD` from it, and
+   merge the newest upstream commit compatible with Zig 0.16.0 with
+   `git merge --no-ff`. Keep the branch append-only from first push and keep
+   downstream patches as `uwz(<area>): ...` commits with a ledger ID, upstream
+   reference, invariant, test evidence, and retirement criterion.
+3. Push the tested sync branch, open a PR to `uwz/zig-0.16`, merge after gates,
+   then fetch the resulting integration commit and record its archive or local
+   bare mirror. Never leave a tested local commit unpushed.
+4. Pin the full 40-hex fork commit in `build.zig.zon`, regenerate
+   `build.zig.zon.json`, `build.zig.zon.nix`, and `build.zig.zon.txt`, compare
+   the URL, revision, Zig hash, and Nix hash across all four views, and record
+   the fork commit, upstream base, and hashes. Regeneration alone is not proof;
+   it can skip when zon2nix or nix is absent.
+5. Rebuild from an empty cache, run the native Windows runtime job and the
+   standard gates, and update notices and provenance. Never rewrite a pinned
+   commit; add a revert or follow-up commit.
 
 For C/C++ package sources, retain immutable commits and Zig package hashes,
 native source lists, and static-library outputs. Keep lsquic's ls-qpack and
@@ -195,7 +235,9 @@ When bumping lsquic, regenerate `vendor/lsquic_overlay`:
 1. Update all versioned surfaces and run `sh scripts/check_release_version.sh`.
 2. Add a dated `CHANGELOG.md` section with breaking changes and limitations;
    do not leave an `Unreleased` placeholder in a final release snapshot.
-3. Verify `THIRD_PARTY_NOTICES.md` and every packaged license.
+3. Verify `THIRD_PARTY_NOTICES.md` and every packaged license. For a libxev
+   fork pin, resolve the pinned commit from a second machine and against the
+   retained archive.
 4. Pass local formatting, convention, test, and build checks.
 5. Pass ASan/UBSan/leak, MemorySanitizer, Smith fuzz, OSS-Fuzz object/smoke,
    Autobahn, h1spec, and HTTP/3 cross-implementation checks on the release
