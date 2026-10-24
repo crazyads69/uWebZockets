@@ -1,6 +1,6 @@
 # 0005. libxev downstream fork policy
 
-- Status: Accepted
+- Status: Accepted; extended by [ADR 0006](0006-dependency-forks.md)
 - Date: 2026-10-24
 - Deciders: build/vendor, transport/runtime, verification
 - Release: 2.1.0
@@ -63,7 +63,7 @@ libxev fork.
 The migration landed in 2.1.0: `build.zig.zon` pins the full fork commit,
 XEV-001 and XEV-002 are the ledgered fork commits, and the ADR 0004 overlay and audit
 patch are deleted. The migration record is in
-[docs/libxev_fork.md](../libxev_fork.md).
+[docs/dependency_forks.md](../dependency_forks.md).
 
 This ADR supersedes ADR 0004's overlay decision. ADR 0004 remains as the
 historical record of the queued-close policy that this repository still
@@ -109,12 +109,12 @@ implements.
 
 ## References
 
-- [docs/libxev_fork.md](../libxev_fork.md): normative policy, ledger, sync
-  commands, and migration record.
+- [docs/dependency_forks.md](../dependency_forks.md): normative policy,
+  ledger, sync commands, and migration record.
 - [ADR 0004](0004-windows-iocp-accept-and-queued-close.md): historical
   Windows IOCP overlay and queued-close decision.
 - <https://github.com/farbenbuilds/libxev>: maintained downstream fork.
 - <https://github.com/mitchellh/libxev/issues/252>: upstream accept-lifecycle
   issue.
 - `build.zig.zon`, `scripts/check_libxev_fork.sh`, and
-  `scripts/check_vendor_overlay.sh`.
+  `scripts/check_dependency_forks.sh`.

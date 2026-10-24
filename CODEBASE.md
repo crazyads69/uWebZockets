@@ -65,7 +65,7 @@ uWebZockets/
 │   ├── vendor/
 │   │   ├── root.zig            # artifact wiring and the translated C module
 │   │   ├── boringssl.zig       # BoringSSL source lists, defines, and C++ flags
-│   │   ├── lsquic.zig          # assembled lsquic tree, overlay, and sources
+│   │   ├── lsquic.zig          # assembled lsquic tree and sources
 │   │   ├── libdeflate.zig      # libdeflate sources
 │   │   └── zlib.zig            # bundled zlib sources
 │   ├── sanitizers.zig          # ASan/MSan runtime configuration
@@ -107,7 +107,7 @@ uWebZockets/
 │   ├── autobahn/             # RFC 6455 target, Deno runner, and config
 │   └── h1spec/               # HTTP/1.1 compliance target
 ├── examples/                 # HTTP, HTTPS, WebSocket, JSON-RPC, builder, and cluster examples
-└── vendor/                   # h1spec submodule and the lsquic source overlay
+└── vendor/                   # h1spec compliance submodule
 ```
 
 ## Runtime data flow
@@ -398,10 +398,9 @@ fails the lint workflow if any copy drifts. `builds/vendor/boringssl.zig`,
 `builds/vendor/lsquic.zig`, `builds/vendor/libdeflate.zig`, and
 `builds/vendor/zlib.zig` compile the
 pinned C and C++ sources with Zig's own toolchain: BoringSSL reads the
-generated source lists in `gen/sources.json`, lsquic assembles its fetched tree
-with the pre-generated overlay in `vendor/lsquic_overlay/`, and libdeflate and
-zlib use fixed source lists. No CMake, Ninja, Go, Perl, Python, `patch`, or
-system zlib runs during the build. Sanitizer mode changes the compile flags on
+generated source lists in `gen/sources.json`, lsquic imports the maintained
+fork tree directly, and libdeflate and zlib use fixed source lists. No CMake,
+Ninja, Go, Perl, Python, `patch`, or system zlib runs during the build. Sanitizer mode changes the compile flags on
 the same graph, instruments BoringSSL, lsquic, libdeflate, zlib, and the local
 C shim with ASan/UBSan, enables Zig's full C-UB checks, and preserves frame
 pointers. A mutually exclusive x86_64 Linux MemorySanitizer mode rebuilds the
@@ -414,14 +413,17 @@ deterministically, and defines native and musl compile checks. `build.zig.zon`
 pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and zlib
 by immutable URL or commit plus Zig package hash.
 
-libxev provenance follows the [fork policy](docs/libxev_fork.md).
-`build.zig.zon` pins `farbenbuilds/libxev` at the full commit
-`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`; the branch is
-based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries
-XEV-001 (IOCP `AcceptEx` ownership) and XEV-002 (Winsock error mapping)
-([ADR 0005](docs/adr/0005-libxev-fork.md)). The overlay and audit patch are
-deleted; `scripts/check_libxev_fork.sh` checks all four dependency views and
-the remote commit.
+Dependency provenance follows the [fork policy](docs/dependency_forks.md).
+`build.zig.zon` pins `farbenbuilds/libxev` at
+`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16` with XEV-001 and
+XEV-002, and `farbenbuilds/lsquic` at
+`85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main` with LSQ-001 and
+LSQ-002. The h1spec submodule points at
+`999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main` with H1S-001.
+`patches/` and `vendor/lsquic_overlay` are deleted;
+`scripts/check_dependency_forks.sh` checks all pins, dependency views, and
+remote commits. See [ADR 0005](docs/adr/0005-libxev-fork.md) and
+[ADR 0006](docs/adr/0006-dependency-forks.md).
 
 A downstream project can pin
 an exact checkout at a local path without fetching the repository's

@@ -22,4 +22,4 @@ Please describe the changes this PR makes and why it should be merged.
 - [ ] I have run Autobahn without exclusions for WebSocket/RFC 7692 changes
 - [ ] I have compiled and interoperability-tested relevant HTTP/3 changes
 - [ ] I documented API, limit, dependency, and compatibility changes
-- [ ] For libxev pin or patch changes, I used a full 40-hex fork commit, updated all four zon views and provenance, recorded the patch ledger entry, and updated notices ([policy](../docs/libxev_fork.md))
+- [ ] For libxev, lsquic, or h1spec pin or patch changes, I used a full 40-hex fork commit or submodule gitlink, updated all dependency views and provenance, recorded the patch ledger entry, and updated notices ([policy](../docs/dependency_forks.md))

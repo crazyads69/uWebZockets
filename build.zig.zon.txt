@@ -1,8 +1,8 @@
 git+https://github.com/ebiggers/libdeflate#92e6a0db9fa848d742f9eb286c92afc60f2c3dda
 git+https://github.com/farbenbuilds/libxev#cbf01bc432a84cd91a99c1cb1031b46416d044c7
+git+https://github.com/farbenbuilds/lsquic#85bd081c9103c077a7cc98271d09334d0f1043d4
 git+https://github.com/google/boringssl#d3bf4795ad5b79d646cddf2fec687da5b9b502db
 git+https://github.com/litespeedtech/ls-hpack#fda48e02491d865cce00612be8cc10c2622b8e55
 git+https://github.com/litespeedtech/ls-qpack#91567706c41c0d97ab8dc576873ecd472d7869fa
-git+https://github.com/litespeedtech/lsquic#a9616720af78b9aab895145c1792d5305c480ae8
 https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.2.1.tar.gz
 https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz

@@ -22,6 +22,6 @@ runs:
           ~/.cache/zig
           .zig-cache
           tests/package_consumer/.zig-cache
-        key: ${{ runner.os }}-zig-v8-${{ inputs.cache-suffix }}-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'patches/**', 'vendor/lsquic_overlay/**') }}
+        key: ${{ runner.os }}-zig-v8-${{ inputs.cache-suffix }}-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', '.gitmodules') }}
         restore-keys: |
           ${{ runner.os }}-zig-v8-${{ inputs.cache-suffix }}-

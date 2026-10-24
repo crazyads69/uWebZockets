@@ -62,9 +62,11 @@ a second one.
 `http3_extensions` and `webtransport` provide bounded validators and wire
 helpers. They are not connected to the live lsquic listener, which rejects
 extended CONNECT; they do not establish WebTransport, server push, or
-application-datagram support. RFC 10008 is the separate HTTP `QUERY` method
-supported by the router. Live transports reject QUERY requests without a
-syntactically valid `Content-Type` before the route handler runs.
+application-datagram support. ADR 0001 accepts implementation through the
+maintained lsquic fork, but this statement remains true until that work and its
+compliance gate land. RFC 10008 is the separate HTTP `QUERY` method supported
+by the router. Live transports reject QUERY requests without a syntactically
+valid `Content-Type` before the route handler runs.
 
 Deployments must set connection, WebSocket message, write-queue, and HTTP/3
 response capacities appropriate for their traffic, select an appropriate idle

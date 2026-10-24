@@ -65,16 +65,18 @@ bounded draft-16 settings, CONNECT/origin checks, sessions, stream and datagram
 association, capsules, flow control, and error mapping.
 
 Those extension modules are **not connected to the live lsquic listener**. The
-pinned backend exposes raw datagrams but not the complete extended CONNECT,
-outgoing unidirectional stream, or reset-at interfaces they require, and the
-pinned build does not enable the WebTransport server compile option. The live
+maintained fork backend currently exposes raw datagrams but not the complete
+extended CONNECT, outgoing unidirectional stream, or reset-at interfaces they
+require, and the build does not yet enable the WebTransport server compile
+option. The live
 listener rejects CONNECT with `501 Not Implemented`, and WebTransport models
 draft-16 only: it is not a claim of deployed interoperability.
 
 [adr/0001-http3-datagram-and-webtransport.md](adr/0001-http3-datagram-and-webtransport.md)
-records the exact backend blockers, what is already available, and the
-capability-gated activation path for when upstream exposes the missing
-interfaces.
+records the exact backend blockers and the accepted implementation plan. The
+maintained `farbenbuilds/lsquic` fork can carry the missing server interfaces,
+but the live path remains capability-gated until the 2.2.0 implementation and
+compliance gate land.
 
 ## Verification
 

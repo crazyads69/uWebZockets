@@ -10,7 +10,7 @@ the [README](../README.md) for the quick start and the other
 - A build target: Linux or macOS are supported; Windows has native compile and
   runtime jobs; FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD are community targets
   (see [Platform support](#platform-support))
-- The `vendor/h1spec` submodule for the h1spec development suite
+- The `vendor/h1spec` submodule pinned to `farbenbuilds/h1spec` for the h1spec development suite
 
 Zig fetches and compiles BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and
 zlib itself. No CMake, Ninja, Go, Perl, Python, `patch`, or system zlib

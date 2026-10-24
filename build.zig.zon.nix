@@ -69,11 +69,11 @@ let
       rev = "91567706c41c0d97ab8dc576873ecd472d7869fa";
       hash = "sha256-kbwtvlEmWBA+qUUwYhpZuh5rvNxBum30d6RQDbAF5AM=";
     };
-    "N-V-__8AAH6VZwAKiOkYrd_YSpAX_LDuhK6AYwKdPAW-Yg-d" = fetchZigGit {
+    "N-V-__8AAHTbZwBjupXTEP40_CyE44mVS7bxW8RVOJfVt5eC" = fetchZigGit {
       name = "lsquic";
-      url = "https://github.com/litespeedtech/lsquic";
-      rev = "a9616720af78b9aab895145c1792d5305c480ae8";
-      hash = "sha256-/OwOctrxOL7KLiE0vhDO282LjMYq+A3fP7TFzdeP2+8=";
+      url = "https://github.com/farbenbuilds/lsquic";
+      rev = "85bd081c9103c077a7cc98271d09334d0f1043d4";
+      hash = "sha256-ixhRWOc33LNTNa+G7agEmlr4vy50q7Vd7d+M/FVH4j8=";
     };
     "N-V-__8AAJ2cNgAgfBtAw33Bxfu1IWISDeKKSr3DAqoAysIJ" = fetchzip {
       name = "zlib";

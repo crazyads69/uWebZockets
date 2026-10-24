@@ -1,6 +1,6 @@
 # 0004. Windows IOCP accept lifecycle and queued-close completion policy
 
-- Status: Superseded by [ADR 0005](0005-libxev-fork.md); historical
+- Status: Superseded by [ADR 0005](0005-libxev-fork.md) and [ADR 0006](0006-dependency-forks.md); historical
 - Date: 2026-10-19
 - Deciders: transport/runtime, build/vendor, verification
 - Release: 1.9.0

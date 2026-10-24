@@ -47,7 +47,7 @@ curl -i http://127.0.0.1:3000/
 The `hello_world` build step compiles and starts the example on port 3000.
 The first build downloads the pinned dependency packages through Zig's
 package manager and caches them; later builds reuse the caches. The
-`vendor/h1spec` submodule is only needed for the h1spec compliance suite.
+`vendor/h1spec` submodule, pinned to `farbenbuilds/h1spec`, is only needed for the h1spec compliance suite.
 
 ### Use it in your own project
 
@@ -456,7 +456,7 @@ in [`examples/`](examples/), with walkthroughs in
 | [Operations](docs/operations.md) | Build, sanitizers, fuzzing, C ABI, dependency use, platform tiers |
 | [Codebase](CODEBASE.md) | File-by-file map of the implementation |
 | [CI pipeline](CI_CD_PIPELINE.md) | Workflow gates and verification matrix |
-| [libxev fork policy](docs/libxev_fork.md) | Upstream mirror, integration branch, patch ledger, migration |
+| [Dependency fork policy](docs/dependency_forks.md) | Maintained forks, upstream mirrors, patch ledger, provenance |
 
 ## Platform support
 
@@ -493,7 +493,9 @@ release closes and which boundaries are deliberate or blocked upstream.
 BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.2.1 provides the
 WebSocket frame state machine, and lsquic provides QUIC. Zig compiles BoringSSL,
 lsquic (with ls-qpack and ls-hpack), libdeflate, and zlib from pinned packages,
-so the build needs only Zig. Use a released tag or pin an exact source commit.
+so the build needs only Zig. libxev, lsquic, and h1spec come from maintained
+downstream forks pinned by full commit. Use a released tag or pin an exact
+source commit.
 
 ## License
 

@@ -25,11 +25,12 @@
             .hash = "N-V-__8AAA5Ieg5843crc8uXWdNhmmfStwJqA-9TknJSx3_n",
         },
 
-        // litespeedtech/lsquic — LiteSpeed Technologies Inc.
-        // Release 4.10.2, including the QPACK decoded-header-set bound.
+        // farbenbuilds/lsquic — downstream integration branch uwz/main.
+        // Base v4.10.2 (a9616720af78b9aab895145c1792d5305c480ae8)
+        // plus LSQ-001 and LSQ-002.
         .lsquic = .{
-            .url = "git+https://github.com/litespeedtech/lsquic#a9616720af78b9aab895145c1792d5305c480ae8",
-            .hash = "N-V-__8AAH6VZwAKiOkYrd_YSpAX_LDuhK6AYwKdPAW-Yg-d",
+            .url = "git+https://github.com/farbenbuilds/lsquic#85bd081c9103c077a7cc98271d09334d0f1043d4",
+            .hash = "N-V-__8AAHTbZwBjupXTEP40_CyE44mVS7bxW8RVOJfVt5eC",
         },
 
         // litespeedtech/ls-qpack — LiteSpeed Technologies Inc.
@@ -77,9 +78,7 @@
         "examples",
         "tests",
         "fuzz",
-        "patches",
         "scripts/check_static_archive.sh",
-        "vendor/lsquic_overlay",
         "flake.nix",
         "flake.lock",
     },

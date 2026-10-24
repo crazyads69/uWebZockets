@@ -91,11 +91,10 @@ project overrides take precedence over vendored defaults.
   (`x86_64-windows-gnu` / MinGW ABI), FreeBSD, NetBSD, OpenBSD, and
   DragonFlyBSD. Ensure platform-specific I/O branches remain isolated to
   transport abstractions (POSIX and Windows IOCP via `libxev`).
-- Submit non-libxev dependency fixes to the upstream project rather than
-  rewriting vendored files without an auditable patch. libxev is the
-  exception: the `uwz/zig-0.16` integration branch exists and carries XEV-001 and XEV-002;
-  the manifest pins a full fork commit. Never send patches to
-  `mitchellh/libxev`; see [docs/libxev_fork.md](docs/libxev_fork.md).
+- Downstream fixes for libxev, lsquic, and h1spec live as `uwz` commits on
+  their maintained forks, never as local patches or upstream submissions.
+  The upstream repositories are fetch-only. See
+  [docs/dependency_forks.md](docs/dependency_forks.md).
 
 ## Local checks
 
@@ -104,6 +103,7 @@ Run all relevant checks before opening a pull request:
 ```sh
 zig fmt --check build.zig src examples tests fuzz
 sh scripts/check_conventions.sh
+sh scripts/check_dependency_forks.sh
 sh scripts/check_release_version.sh
 sh scripts/check_package_paths.sh
 zig build test --summary all
@@ -174,36 +174,54 @@ Record the upstream version, immutable URL or revision, Zig package hash, Nix
 hash, license, and any API migration. Rebuild from an empty Zig/vendor cache so
 a stale artifact cannot hide a dependency problem.
 
-### libxev fork updates
+### Maintained dependency fork updates
 
-The maintained downstream fork is <https://github.com/farbenbuilds/libxev>,
-and that relationship is policy now. The `uwz/zig-0.16` integration branch
-exists at `cbf01bc` and carries XEV-001 and XEV-002; the manifest pins that full commit and
-the ADR 0004 IOCP overlay is removed. Upstream `mitchellh/libxev` is fetch-only:
-do not push, open issues or pull requests, comment, or send patches there.
+libxev, lsquic, and h1spec are maintained at
+<https://github.com/farbenbuilds/libxev>,
+<https://github.com/farbenbuilds/lsquic>, and
+<https://github.com/farbenbuilds/h1spec>. Upstream `mitchellh/libxev`,
+`litespeedtech/lsquic`, and `uNetworking/h1spec` are fetch-only: do not push,
+open issues or pull requests, comment, or send patches there.
 
-The update procedure is:
+| Dependency | Integration branch | Current pin | Downstream ledger |
+| --- | --- | --- | --- |
+| libxev | `uwz/zig-0.16` | `cbf01bc432a84cd91a99c1cb1031b46416d044c7` | XEV-001, XEV-002 |
+| lsquic | `uwz/main` | `85bd081c9103c077a7cc98271d09334d0f1043d4` | LSQ-001, LSQ-002 |
+| h1spec | `uwz/main` | `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` | H1S-001 |
 
-1. Synchronize the fork mirror with a fast-forward merge, push it, then
-   `git fetch origin main` and prove
-   `test "$(git rev-parse origin/main)" = "$(git rev-parse upstream/main)"`.
+For every maintained dependency:
+
+1. Synchronize the fork mirror with a fast-forward merge, push it, then fetch
+   the remote mirror and prove it resolves to the upstream default branch.
    Record any mirror-repair incident.
-2. Fetch `origin/uwz/zig-0.16`, create `sync/zig-0.16-YYYYMMDD` from it, and
-   merge the newest upstream commit compatible with Zig 0.16.0 with
-   `git merge --no-ff`. Keep the branch append-only from first push and keep
-   downstream patches as `uwz(<area>): ...` commits with a ledger ID, upstream
-   reference, invariant, test evidence, and retirement criterion.
-3. Push the tested sync branch, open a PR to `uwz/zig-0.16`, merge after gates,
-   then fetch the resulting integration commit and record its archive or local
-   bare mirror. Never leave a tested local commit unpushed.
-4. Pin the full 40-hex fork commit in `build.zig.zon`, regenerate
-   `build.zig.zon.json`, `build.zig.zon.nix`, and `build.zig.zon.txt`, compare
-   the URL, revision, Zig hash, and Nix hash across all four views, and record
-   the fork commit, upstream base, and hashes. Regeneration alone is not proof;
-   it can skip when zon2nix or nix is absent.
-5. Rebuild from an empty cache, run the native Windows runtime job and the
-   standard gates, and update notices and provenance. Never rewrite a pinned
-   commit; add a revert or follow-up commit.
+2. Fetch the integration branch, create a `sync/...-YYYYMMDD` branch from it,
+   and merge the newest compatible upstream commit with `git merge --no-ff`.
+   Keep the branch append-only from first push and keep downstream patches as
+   `uwz(<area>): ...` commits with a ledger ID, upstream reference, invariant,
+   test evidence, and retirement criterion.
+3. Push the tested sync branch, open a PR to the integration branch, merge
+   after gates, then fetch the resulting integration commit and record its
+   archive or local bare mirror. Never leave a tested local commit unpushed.
+4. Pin the full 40-hex commit:
+   - libxev and lsquic: update `build.zig.zon`, regenerate all four zon views,
+     compare the URL, revision, Zig hash, and Nix hash, and record the fork
+     commit, upstream base, and hashes. Regeneration alone is not proof.
+   - h1spec: update `.gitmodules` and the submodule gitlink, then verify the
+     checked-out HEAD matches the gitlink. Do not apply a patch in CI.
+5. Rebuild from an empty cache, run the owning gates, and update notices and
+   provenance. Never rewrite a pinned commit; add a revert or follow-up commit.
+
+For libxev, keep `uwz/zig-0.16` on the newest upstream commit compatible with
+Zig 0.16.0 and run the native Windows runtime job. For lsquic, keep
+`lsquic_versions_to_string.c` committed in the fork, run the HTTP/3
+cross-implementation gate, and update the generated table with LSQ-002 when
+the upstream version enum changes. For h1spec, run the compliance job from the
+checked-out submodule and retire H1S-001 only when upstream performs the same
+cleanup.
+
+`scripts/check_dependency_forks.sh` verifies the libxev, lsquic, and h1spec
+pins. Do not reintroduce `patches/`, `vendor/lsquic_overlay`, or a CI `patch`
+step for a maintained dependency.
 
 For C/C++ package sources, retain immutable commits and Zig package hashes,
 native source lists, and static-library outputs. Keep lsquic's ls-qpack and
@@ -214,27 +232,15 @@ target-local settings work.
 
 When bumping BoringSSL, libdeflate, or zlib, update the source list or flags in
 the matching `builds/` module if upstream added or removed a translation unit.
-When bumping lsquic, regenerate `vendor/lsquic_overlay`:
-
-1. Fetch the new revision, for example
-   `zig fetch git+https://github.com/litespeedtech/lsquic#<revision>`, and
-   extract the archive from the global cache.
-2. Regenerate `lsquic_versions_to_string.c` with
-   `perl src/liblsquic/gen-verstrs.pl include/lsquic.h <overlay>` and update
-   its provenance comment with the new revision.
-3. Apply `patches/lsquic_h3_message_error.patch` to a temporary copy of the
-   fetched tree and copy the three patched `src/liblsquic` files into the
-   overlay.
-4. Run `sh scripts/check_vendor_overlay.sh`; the lint workflow runs it too.
 
 ## Releasing
 
 1. Update all versioned surfaces and run `sh scripts/check_release_version.sh`.
 2. Add a dated `CHANGELOG.md` section with breaking changes and limitations;
    do not leave an `Unreleased` placeholder in a final release snapshot.
-3. Verify `THIRD_PARTY_NOTICES.md` and every packaged license. For a libxev
-   fork pin, resolve the pinned commit from a second machine and against the
-   retained archive.
+3. Verify `THIRD_PARTY_NOTICES.md` and every packaged license. For any
+   maintained fork pin, resolve the pinned commit from a second machine and
+   against the retained archive.
 4. Pass local formatting, convention, test, and build checks.
 5. Pass ASan/UBSan/leak, MemorySanitizer, Smith fuzz, OSS-Fuzz object/smoke,
    Autobahn, h1spec, and HTTP/3 cross-implementation checks on the release

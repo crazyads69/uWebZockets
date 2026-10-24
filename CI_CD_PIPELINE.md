@@ -38,6 +38,7 @@ development shell, and uses the runner's ripgrep for the convention scan
 ```sh
 zig fmt --check build.zig src examples tests fuzz
 sh scripts/check_conventions.sh
+sh scripts/check_dependency_forks.sh
 sh scripts/check_release_version.sh
 sh scripts/check_docs.sh
 ```
@@ -45,11 +46,13 @@ sh scripts/check_docs.sh
 The convention scanner checks project source filenames, Zig function and
 variable names, and text files for prohibited emoji code points. Vendored
 sources are excluded because their upstream conventions are preserved. The
-release metadata check keeps the Zig package, Nix package, C ABI, tests,
-changelog, and versioned documentation synchronized. The documentation link
-check resolves every relative Markdown target in the top-level documents and
-`docs/**/*.md` against the checkout, ignoring external URLs, anchor-only
-targets, and fenced code blocks.
+dependency-fork check resolves the libxev and lsquic commits, verifies the
+h1spec submodule gitlink, and rejects branches, tags, short SHAs, local
+patches, and stale overlays. The release metadata check keeps the Zig package,
+Nix package, C ABI, tests, changelog, and versioned documentation synchronized.
+The documentation link check resolves every relative Markdown target in the
+top-level documents and `docs/**/*.md` against the checkout, ignoring external
+URLs, anchor-only targets, and fenced code blocks.
 
 ## Unit and build verification
 
@@ -227,29 +230,33 @@ runner generates a one-run localhost certificate in a private temporary
 directory and deletes its key during cleanup, so clean checkouts do not depend
 on ignored developer certificates.
 
-## libxev provenance
+## Maintained dependency provenance
 
-`build.zig.zon` pins the maintained fork <https://github.com/farbenbuilds/libxev>
-at the full commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on
-`uwz/zig-0.16`. The branch is based on upstream
-`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries XEV-001 (Windows IOCP `AcceptEx` ownership) and XEV-002
-(Winsock error mapping), as a ledgered commit
-([ADR 0005](docs/adr/0005-libxev-fork.md)). The overlay and audit patch are
-deleted.
+`build.zig.zon` pins the maintained forks
+<https://github.com/farbenbuilds/libxev> at
+`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16` and
+<https://github.com/farbenbuilds/lsquic> at
+`85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`. The h1spec
+submodule points at <https://github.com/farbenbuilds/h1spec> commit
+`999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main`. The libxev ledger
+carries XEV-001 and XEV-002; lsquic carries LSQ-001 and LSQ-002; h1spec carries
+H1S-001 ([ADR 0005](docs/adr/0005-libxev-fork.md),
+[ADR 0006](docs/adr/0006-dependency-forks.md)). `patches/` and
+`vendor/lsquic_overlay` are deleted.
 
-CI verifies the libxev URL, revision, Zig hash, and Nix hash across all four
-views with `scripts/check_libxev_fork.sh`, including remote resolution of the
-full commit; branches, tags, and short SHAs are rejected. Regeneration alone
-is not proof because `scripts/update_zon_files.sh` can skip when zon2nix or nix
-is absent. `scripts/check_vendor_overlay.sh` now covers only the lsquic
-overlay. Lint also runs the
-stale-phrase grep. Before release, resolve the pinned commit from a second
-machine and against the retained archive or local bare mirror. Release and
-benchmark provenance record the fork commit and its upstream base; tags are
-never authoritative. Fork `main` and `uwz/zig-0.16` require branch protection;
-`main` is an exact read-only mirror and the integration branch is append-only.
-The normative procedure and patch ledger are in
-[docs/libxev_fork.md](docs/libxev_fork.md).
+CI verifies every pin with `scripts/check_dependency_forks.sh`, including the
+libxev and lsquic URL, revision, Zig hash, and Nix hash across all four views,
+the h1spec `.gitmodules` URL and gitlink, remote resolution of every full
+commit, integration-branch ancestry, and mirror equality. Branches, tags, and
+short SHAs are rejected. Regeneration alone is not proof because
+`scripts/update_zon_files.sh` can skip when zon2nix or nix is absent. Lint also
+runs the stale-phrase grep. Before release, resolve every pinned commit from a
+second machine and against the retained archive or local bare mirror. Release
+and benchmark provenance record the fork commits and their upstream bases;
+tags are never authoritative. Every mirror and integration branch requires
+branch protection; mirrors are exact read-only mirrors and integration
+branches are append-only. The normative procedure and patch ledger are in
+[docs/dependency_forks.md](docs/dependency_forks.md).
 
 ## Performance regression
 

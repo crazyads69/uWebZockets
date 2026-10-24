@@ -44,7 +44,7 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache
-          key: ${{ runner.os }}-http3-v3-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.lock', 'patches/**', 'vendor/lsquic_overlay/**', 'scripts/http3_compliance/flake.lock') }}
+          key: ${{ runner.os }}-http3-v3-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.lock', 'scripts/http3_compliance/flake.lock') }}
           restore-keys: |
             ${{ runner.os }}-http3-v3-
 

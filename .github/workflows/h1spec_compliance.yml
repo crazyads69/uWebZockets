@@ -63,8 +63,6 @@ jobs:
 
       - name: Run h1spec
         run: |
-          patch -f -d vendor/h1spec -p1 \
-            -i "$GITHUB_WORKSPACE/patches/h1spec_deno_cleanup.patch"
           cd vendor/h1spec
           deno run --allow-net=127.0.0.1:8000 http_test.ts 127.0.0.1 8000
 

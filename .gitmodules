@@ -1,4 +1,4 @@
 [submodule "vendor/h1spec"]
 	path = vendor/h1spec
-	url = https://github.com/uNetworking/h1spec
+	url = https://github.com/farbenbuilds/h1spec
 	shallow = true

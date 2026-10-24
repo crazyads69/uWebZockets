@@ -3,6 +3,22 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [Unreleased]
+
+### Changed
+
+- lsquic and h1spec now use maintained downstream forks, following the libxev
+  policy. `build.zig.zon` pins `farbenbuilds/lsquic` commit
+  `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`, and the
+  `vendor/h1spec` submodule points at `farbenbuilds/h1spec` commit
+  `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main`.
+- `patches/` and `vendor/lsquic_overlay` are deleted. lsquic LSQ-001 and
+  LSQ-002 and h1spec H1S-001 live in the fork integration branches, and
+  `scripts/check_dependency_forks.sh` verifies all maintained dependency pins.
+- ADR 0001 is accepted for HTTP/3 datagram and WebTransport implementation
+  through the lsquic fork. The live path remains capability-gated until the
+  2.2.0 compliance work lands.
+
 ## [2.1.0] - 2026-10-24
 
 Release that moves deadlines onto a per-worker hierarchical timing wheel,

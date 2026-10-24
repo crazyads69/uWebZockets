@@ -65,7 +65,7 @@ jobs:
             ~/.cache/zig
             candidate/.zig-cache
             baseline/.zig-cache
-          key: ${{ runner.os }}-bench-zig-v3-${{ hashFiles('candidate/build.zig', 'candidate/builds/**/*.zig', 'candidate/build.zig.zon', 'candidate/flake.nix', 'candidate/flake.lock', 'candidate/patches/**', 'candidate/vendor/lsquic_overlay/**', 'baseline/build.zig', 'baseline/builds/**/*.zig', 'baseline/build.zig.zon', 'baseline/flake.nix', 'baseline/flake.lock', 'baseline/patches/**', 'baseline/vendor/lsquic_overlay/**') }}
+          key: ${{ runner.os }}-bench-zig-v3-${{ hashFiles('candidate/build.zig', 'candidate/builds/**/*.zig', 'candidate/build.zig.zon', 'candidate/flake.nix', 'candidate/flake.lock', 'candidate/.gitmodules', 'baseline/build.zig', 'baseline/builds/**/*.zig', 'baseline/build.zig.zon', 'baseline/flake.nix', 'baseline/flake.lock', 'baseline/.gitmodules') }}
           restore-keys: |
             ${{ runner.os }}-bench-zig-v3-
 

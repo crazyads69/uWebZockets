@@ -80,9 +80,15 @@ claim.
 - Cross-process `SO_REUSEPORT` / systemd socket-activation handoff.
 - Decisions on per-listener certificates, a bounded TRACE reflection example,
   and an optional `uwz_app_listen_all` C entry point.
-- A retained fork archive and second-machine resolution for the pinned libxev
-  commit, plus the native Windows runtime gate
-  ([ADR 0005](adr/0005-libxev-fork.md), [policy](libxev_fork.md)).
+- A retained fork archive and second-machine resolution for the pinned libxev,
+  lsquic, and h1spec commits, plus the native Windows runtime gate
+  ([ADR 0005](adr/0005-libxev-fork.md),
+  [ADR 0006](adr/0006-dependency-forks.md), [policy](dependency_forks.md)).
+- lsquic and h1spec fork migration: pin the maintained commits, remove
+  `patches/` and `vendor/lsquic_overlay`, and run the HTTP/3 and h1spec gates.
+- HTTP/3 datagram and WebTransport implementation through the maintained
+  lsquic fork, with the live path enabled only after the compliance gate
+  ([ADR 0001](adr/0001-http3-datagram-and-webtransport.md)).
 
 ## Deliberate boundaries
 
@@ -97,7 +103,7 @@ condition that would change it.
 | HTTP/2 server push is not implemented | Deprecated in practice and removed from lsquic upstream; no browser consumes it |
 | h2c Upgrade is not implemented | RFC 9113 removed the Upgrade mechanism; cleartext HTTP/2 uses prior knowledge and TLS uses ALPN |
 | HTTP/2 caps at 8 concurrent streams and one WebSocket tunnel per connection | Stream and tunnel storage is connection-owned and carved from the slab. Raising the defaults requires specializing the connection type |
-| WebTransport is not live | The pinned lsquic build exposes raw datagrams but not extended CONNECT, server-initiated unidirectional streams, or reset-at; see [ADR 0001](adr/0001-http3-datagram-and-webtransport.md) |
+| WebTransport is not live yet | ADR 0001 is accepted for implementation through the maintained lsquic fork, but the live path stays capability-gated until extended CONNECT, server-initiated unidirectional streams, reset-at, and the compliance gate land; see [ADR 0001](adr/0001-http3-datagram-and-webtransport.md) |
 | HTTP/3 does not advance the metrics registry | The engine has no registry handle without new plumbing through the transport; records are emitted instead |
 | kTLS is a standalone helper, not an integrated offload | The pinned BoringSSL has no kernel-TLS support, so the connection path cannot hand keys to the kernel. `uz.ktls` remains available to applications that manage their own records |
 | MemorySanitizer does not instrument Zig code | Permanent decision dated 2026-10-19: Zig 0.16 emits no MSan instrumentation, so the MSan gate covers the pinned C/C++ dependency boundary ([CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md#memorysanitizer-contract-permanent-2026-10-19)) |
@@ -147,7 +153,7 @@ are recorded in [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md).
 [ADR 0005](adr/0005-libxev-fork.md) selects `farbenbuilds/libxev` as the
 maintained fork. The 2.1.0 release pins commit `cbf01bc` on `uwz/zig-0.16`,
 carries XEV-001 in the fork, and removes the overlay and audit patch;
-[libxev_fork.md](libxev_fork.md) is the policy. The TLS cluster test plumbing already
+[dependency_forks.md](dependency_forks.md) is the policy. The TLS cluster test plumbing already
 binds `getsockname` and `SO_RCVTIMEO` through ws2_32, so those tests execute
 rather than skip. Windows remains compile-only in the support claim until the
 native job is green for the release commit.
@@ -163,9 +169,10 @@ Candidates for the next minor releases, in rough dependency order:
 3. **Configurable HTTP/2 stream and tunnel counts** through connection-type
    specialization.
 4. **HTTP/3 counter parity** by threading the metrics registry into the engine.
-5. **WebTransport activation** behind the capability gate recorded in
-   [ADR 0001](adr/0001-http3-datagram-and-webtransport.md), once the pinned
-   lsquic exposes the required server interfaces.
+5. **WebTransport activation** through the maintained lsquic fork, behind the
+   capability gate recorded in
+   [ADR 0001](adr/0001-http3-datagram-and-webtransport.md), once the fork
+   exposes and tests the required server interfaces.
 6. **kTLS integration** if BoringSSL gains a supported key-handoff API.
 
 ## How to influence the roadmap

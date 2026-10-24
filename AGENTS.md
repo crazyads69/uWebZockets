@@ -124,38 +124,36 @@ Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
 - Target libraries: BoringSSL, lsquic, libdeflate, and zlib.
 - **Compilation Strategy**: Compile every C/C++ dependency with Zig's own `zig cc` and `zig c++` toolchain from native source lists under `builds/`. Keep generated inputs pre-generated under `vendor/`; never reintroduce CMake, Ninja, Go, Perl, Python, `patch`, or system zlib as build requirements.
 
-## libxev Fork Policy
+## Maintained Dependency Fork Policy
 
-- The maintained downstream fork is <https://github.com/farbenbuilds/libxev>.
-  Upstream `mitchellh/libxev` is fetch-only: never push, open issues or pull
-  requests, comment, or submit patches there.
-- Fork `main` is an exact read-only mirror; never build or pin it. The
-  integration branch is created by the migration. After migration, downstream
-  work will live on `uwz/zig-0.16`, based on the newest upstream commit
-  compatible with Zig 0.16.0, with auditable `uwz(<area>): ...` patch commits
-  in the ledger.
-- After migration, pin only a full 40-hex fork commit in `build.zig.zon`,
-  update all four zon views together, and rebuild from an empty cache. Compare
-  the libxev URL, revision, Zig hash, and Nix hash across all four views;
-  regeneration alone is not proof. Branches, tags, and short SHAs are never
-  authoritative.
-- `uwz/zig-0.16` is append-only from first push. `main` blocks deletion and
-  non-fast-forward updates except the recorded maintainer mirror-repair
-  bypass; `uwz/zig-0.16` requires review and blocks force-push and deletion.
-  The repair is the sole permitted bypass and protection must be confirmed
-  active afterward.
-- Every sync is a security review: prove
-  `test "$(git rev-parse origin/main)" = "$(git rev-parse upstream/main)"`.
-  After migration, review `main..uwz/zig-0.16`, and inspect build scripts,
-  workflows, submodules, binaries, licenses, network/TLS, and memory changes
-  with build/vendor, transport/runtime, and verification.
-- The manifest pins `farbenbuilds/libxev` commit
-  `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`, based on
-  upstream `9ce8e8e`, with XEV-001 and XEV-002 as the downstream patches. The former
-  [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md) overlay is
-  historical; [ADR 0005](docs/adr/0005-libxev-fork.md) governs.
-- Canonical policy: [docs/libxev_fork.md](docs/libxev_fork.md). Decision:
-  [ADR 0005](docs/adr/0005-libxev-fork.md).
+- Maintained forks: `farbenbuilds/libxev`, `farbenbuilds/lsquic`, and
+  `farbenbuilds/h1spec`. Upstream `mitchellh/libxev`,
+  `litespeedtech/lsquic`, and `uNetworking/h1spec` are fetch-only: never push,
+  open issues or pull requests, comment, or submit patches there.
+- Each fork's default branch is an exact read-only mirror; never build or pin
+  it. Downstream work lives on `uwz/zig-0.16` for libxev and `uwz/main` for
+  lsquic and h1spec, with auditable `uwz(<area>): ...` patch commits in the
+  ledger.
+- Pin only a full 40-hex commit. Zig dependencies update all four zon views
+  together; h1spec updates `.gitmodules` and the submodule gitlink. Branches,
+  tags, and short SHAs are never authoritative.
+- Integration branches are append-only from first push. Mirror branches block
+  deletion and non-fast-forward updates except the recorded maintainer repair;
+  integration branches require review and block force-push and deletion.
+- Every sync is a security review: prove the mirror and upstream resolve to the
+  same commit, review the mirror-to-integration range, and inspect build
+  scripts, workflows, submodules, binaries, licenses, network/TLS, and memory
+  changes with build/vendor and the owning domain specialist.
+- Current pins: libxev `cbf01bc432a84cd91a99c1cb1031b46416d044c7`
+  (XEV-001, XEV-002), lsquic `85bd081c9103c077a7cc98271d09334d0f1043d4`
+  (LSQ-001, LSQ-002), and h1spec
+  `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` (H1S-001).
+- `patches/` and `vendor/lsquic_overlay` are deleted. Do not reintroduce a
+  local patch, overlay, or CI `patch` step for a maintained dependency.
+- Canonical policy: [docs/dependency_forks.md](docs/dependency_forks.md).
+  Decisions: [ADR 0005](docs/adr/0005-libxev-fork.md) and
+  [ADR 0006](docs/adr/0006-dependency-forks.md). ADR 0001 is accepted for
+  WebTransport implementation in 2.2.0.
 
 ## graphify
 

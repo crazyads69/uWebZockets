@@ -12,14 +12,15 @@ pub const Artifacts = struct {
 
 /// liblsquic translation units, relative to the assembled tree root.
 ///
-/// This mirrors the pinned `src/liblsquic/CMakeLists.txt`; the generated
-/// `lsquic_versions_to_string.c` comes from the pre-generated overlay.
+/// This mirrors the pinned `src/liblsquic/CMakeLists.txt`. The maintained
+/// fork commits the generated `lsquic_versions_to_string.c`, so the build
+/// applies no source overlay.
 ///
 /// ls-qpack and ls-hpack are pinned Zig package dependencies compiled as one
 /// translation unit each. Neither repository has a generation step, system
 /// tool requirement, or architecture-specific source; `XXH_HEADER_NAME` points
 /// both at lsquic's bundled xxHash, and the only target-specific input is the
-/// musl `sys/queue.h` overlay below.
+/// musl `sys/queue.h` compatibility header below.
 const sources = [_][]const u8{
     "src/liblsquic/ls-qpack/lsqpack.c",
     "src/liblsquic/lsquic_adaptive_cc.c",
@@ -125,34 +126,13 @@ pub fn build(
 
     const tree = b.addWriteFiles();
     _ = tree.addCopyDirectory(lsquic_dependency.path(""), "", .{});
-
-    const overlay = b.addWriteFiles();
-    _ = overlay.addCopyFile(
-        b.path("vendor/lsquic_overlay/lsquic_versions_to_string.c"),
-        "src/liblsquic/lsquic_versions_to_string.c",
-    );
-    _ = overlay.addCopyFile(
-        b.path("vendor/lsquic_overlay/src/liblsquic/lsquic_qdec_hdl.h"),
-        "src/liblsquic/lsquic_qdec_hdl.h",
-    );
-    _ = overlay.addCopyFile(
-        b.path("vendor/lsquic_overlay/src/liblsquic/lsquic_qdec_hdl.c"),
-        "src/liblsquic/lsquic_qdec_hdl.c",
-    );
-    _ = overlay.addCopyFile(
-        b.path("vendor/lsquic_overlay/src/liblsquic/lsquic_stream.c"),
-        "src/liblsquic/lsquic_stream.c",
-    );
     if (target.result.abi.isMusl()) {
         // musl does not ship the BSD queue macros that liblsquic includes.
-        _ = overlay.addCopyFile(
+        _ = tree.addCopyFile(
             lshpack_dependency.path("compat/queue/sys/queue.h"),
             "include/sys/queue.h",
         );
     }
-    // The overlay directory is copied after the upstream tree so the
-    // pre-patched and pre-generated files win without an external patch tool.
-    _ = tree.addCopyDirectory(overlay.getDirectory(), "", .{});
     _ = tree.addCopyDirectory(
         lsqpack_dependency.path(""),
         "src/liblsquic/ls-qpack",

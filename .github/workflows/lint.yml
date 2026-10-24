@@ -44,11 +44,8 @@ jobs:
       - name: Check repository conventions
         run: sh scripts/check_conventions.sh
 
-      - name: Check libxev fork provenance
-        run: sh scripts/check_libxev_fork.sh
-
-      - name: Check vendored overlays
-        run: sh scripts/check_vendor_overlay.sh
+      - name: Check dependency forks
+        run: sh scripts/check_dependency_forks.sh
 
       - name: Check release metadata
         run: sh scripts/check_release_version.sh

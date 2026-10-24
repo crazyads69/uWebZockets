@@ -1,12 +1,16 @@
 # 0001. HTTP/3 datagrams and WebTransport activation
 
-- Status: Accepted: deferred
+- Status: Accepted
 - Date: 2026-09-26
-- Deciders: QUIC/HTTP3 engineering
-- Pinned dependency: litespeedtech/lsquic commit
-  `a9616720af78b9aab895145c1792d5305c480ae8` (LSQUIC_MAJOR_VERSION 4,
-  LSQUIC_MINOR_VERSION 10, LSQUIC_PATCH_VERSION 2), Zig package hash
-  `N-V-__8AAH6VZwAKiOkYrd_YSpAX_LDuhK6AYwKdPAW-Yg-d`.
+- Revision: 2026-10-24, deferral lifted by
+  [ADR 0006](0006-dependency-forks.md)
+- Deciders: QUIC/HTTP3 engineering, build/vendor, verification
+- Pinned dependency: `farbenbuilds/lsquic` commit
+  `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`, based on
+  `litespeedtech/lsquic` `a9616720af78b9aab895145c1792d5305c480ae8`
+  (LSQUIC_MAJOR_VERSION 4, LSQUIC_MINOR_VERSION 10,
+  LSQUIC_PATCH_VERSION 2), Zig package hash
+  `N-V-__8AAHTbZwBjupXTEP40_CyE44mVS7bxW8RVOJfVt5eC`.
 
 ## Context
 
@@ -110,32 +114,45 @@ application surface is not contained:
   (`scripts/http3_compliance/`); neither exercises WebTransport sessions or
   datagrams, so an unverified runtime path would ship without a gate.
 
+The 2026-10-24 dependency-fork decision changes the delivery mechanism.
+`farbenbuilds/lsquic` can carry the server WebTransport surface as downstream
+commits, so this ADR no longer has to wait for an upstream release. The
+original blocker analysis above remains the implementation checklist.
+
 ## Decision
 
-Defer. Do not wire HTTP/3 datagrams or WebTransport into the live listener and
-do not add public API for them. Keep `BackendCapabilities` truthful: raw
-datagram primitives exist, every WebTransport-required primitive does not.
-The helper modules remain Zig-only, validated by unit and fuzz tests, and are
-not a claim of deployed interoperability.
+Implement live HTTP/3 datagrams and WebTransport through the maintained
+`farbenbuilds/lsquic` fork. The fork may enable
+`LSQUIC_WEBTRANSPORT_SERVER_SUPPORT`, add server-initiated unidirectional
+streams, `RESET_STREAM_AT`, draft-16 settings, and the required server session
+APIs. The live listener remains capability-gated until all of the following
+are true:
+
+- the engine verifies and advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` and
+  the RFC 9297 HTTP/3 datagram setting;
+- extended CONNECT creates a session bound to an engine connection slot;
+- the existing `webtransport.session_slab`, `datagram_ring.DatagramRing`, and
+  `router/datagram.zig` tables are bound to those slots;
+- decoded quarter-stream-ID datagrams route through `App.dispatch_datagram`;
+- the HTTP/3 compliance gate exercises a WebTransport client successfully.
+
+No new public API is required beyond the existing `App.datagram*` surface.
+v2.2.0 owns the implementation and the capability-bit change.
 
 ## Consequences
 
-- The live wire behavior stays bounded RFC 9114 request/response plus the
-  existing gates; no public surface changes.
-- `docs/protocols.md` points here for the datagram/WebTransport status and
-  `SECURITY.md` keeps its statement that extended CONNECT and application
-  datagrams are not live.
-- Activation is capability-gated. If upstream exposes extended CONNECT,
-  server-initiated unidirectional streams, `RESET_STREAM_AT`, push, and the
-  draft-16 settings, the work would be: flip the matching
-  `BackendCapabilities` bits only after the engine verifies and advertises the
-  settings; bind the existing `webtransport.session_slab`,
-  `datagram_ring.DatagramRing`, and `router/datagram.zig` tables to engine
-  connection slots; route decoded quarter-stream-ID datagrams through
-  `App.dispatch_datagram`; and extend the HTTP/3 compliance gate with a
-  WebTransport client before claiming interoperability.
-- Any future lsquic bump must re-check the `LSQUIC_WEBTRANSPORT` gate and the
-  `builds/vendor/lsquic.zig` define list before any capability bit changes.
+- The deferral is lifted. ADR 0006 supplies the fork, branch, pin, and patch
+  ledger mechanics; this ADR supplies the wire contract.
+- Until the v2.2.0 implementation lands, `docs/protocols.md`, `SECURITY.md`,
+  and `BackendCapabilities` keep the current statement that extended CONNECT
+  and application datagrams are not live. The helper modules remain Zig-only
+  and are not a claim of deployed interoperability.
+- After implementation, update `SECURITY.md`, `docs/protocols.md`,
+  `docs/roadmap.md`, the capability bits, and the compliance gate in the same
+  change that turns the live path on.
+- Any lsquic bump must re-check the `LSQUIC_WEBTRANSPORT` gate, the fork patch
+  ledger, and the `builds/vendor/lsquic.zig` define list before any capability
+  bit changes.
 
 ## References
 
@@ -150,6 +167,8 @@ not a claim of deployed interoperability.
   `src/quic/webtransport.zig`, `src/quic/webtransport/datagrams.zig`,
   `src/quic/datagram_ring.zig`, `src/router/datagram.zig`,
   `src/router/app.zig`, `src/core/udp.zig`.
+- [ADR 0006](0006-dependency-forks.md): maintained lsquic and h1spec forks.
+- <https://github.com/farbenbuilds/lsquic>: downstream WebTransport patches.
 - RFC 9114 (HTTP/3), RFC 9220 (extended CONNECT), RFC 8441 (WebSocket over
   HTTP/2/3), RFC 9221 (QUIC DATAGRAM), RFC 9297 (HTTP/3 datagrams),
   draft-ietf-webtrans-http3-16 (WebTransport over HTTP/3).

@@ -9,7 +9,7 @@ fi
 failed=0
 
 bad_files=$(
-    rg --files .github builds src examples tests scripts fuzz oss-fuzz benchmarks include misc patches |
+    rg --files .github builds src examples tests scripts fuzz oss-fuzz benchmarks include misc |
         while IFS= read -r file; do
             base=${file##*/}
             case "$base" in
