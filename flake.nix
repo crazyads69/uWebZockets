@@ -28,7 +28,7 @@
       }: let
         inherit (pkgs) lib;
         isLinux = pkgs.stdenv.hostPlatform.isLinux;
-        releaseVersion = "2.0.6";
+        releaseVersion = "2.1.0";
         pkgsMusl =
           if isLinux
           then pkgs.pkgsMusl

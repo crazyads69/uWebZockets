@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-24
 - Deciders: build/vendor, transport/runtime, verification
-- Release: unreleased (next libxev dependency update; update during migration)
+- Release: 2.1.0
 
 ## Context
 
@@ -23,9 +23,8 @@ The constraints have not resolved in the overlay's favor:
   PR #249) is not compatible with this project's Zig 0.16.0 build, although
   upstream manifest metadata still declares a 0.16.0 minimum. Following
   upstream `main` would break the pinned toolchain.
-- `farbenbuilds/libxev` is already a GitHub fork of `mitchellh/libxev`. Its
-  default branch `main` exactly mirrors upstream `main` at `451a2bc`, but it
-  has no integration branch or tags yet.
+- `farbenbuilds/libxev` is a GitHub fork of `mitchellh/libxev`. Its default
+  branch `main` exactly mirrors upstream `main` at `451a2bc`.
 - Windows IOCP accept ownership is a downstream correctness requirement that
   must survive future dependency updates with an auditable lineage.
 
@@ -42,8 +41,9 @@ libxev fork.
   pinned.
 - The integration branch `uwz/zig-0.16` is based on the newest upstream commit
   compatible with Zig 0.16.0. It carries auditable `uwz(<area>): ...` patch
-  commits. The migration creates it at the current validated
-  `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` pin.
+  commits and was created at the validated
+  `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` pin. The 2.1.0 release pins
+  commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` from that branch.
 - A future toolchain upgrade creates `uwz/zig-0.17`. A Zig 0.17-only upstream
   `main` is never merged into the 0.16 branch.
 - The integration branch is append-only from first push. Compatible upstream
@@ -60,14 +60,14 @@ libxev fork.
   carries a ledger ID, upstream reference, invariant, test evidence, and
   retirement criterion.
 
-Implementation is deferred to the next libxev dependency update. Until that
-migration lands, `build.zig.zon` remains pinned to upstream `9ce8e8e6...` and
-the ADR 0004 overlay and patch remain authoritative. The migration checklist
-is in [docs/libxev_fork.md](../libxev_fork.md).
+The migration landed in 2.1.0: `build.zig.zon` pins the full fork commit,
+XEV-001 and XEV-002 are the ledgered fork commits, and the ADR 0004 overlay and audit
+patch are deleted. The migration record is in
+[docs/libxev_fork.md](../libxev_fork.md).
 
-This ADR supersedes only ADR 0004's "Fork libxev and pin the fork" alternative.
-It does not supersede ADR 0004's current overlay decision, which remains in
-force until the migration lands.
+This ADR supersedes ADR 0004's overlay decision. ADR 0004 remains as the
+historical record of the queued-close policy that this repository still
+implements.
 
 ## Alternatives considered
 
@@ -94,20 +94,13 @@ force until the migration lands.
 
 ## Consequences
 
-- The current manifest remains on upstream `9ce8e8e6...`; no document or build
-  step may claim the fork is already in use.
-- The ADR 0004 overlay remains authoritative until the migration lands. Patch
-  retirement now follows the fork integration branch rather than waiting for
-  an upstream release.
-- The next libxev dependency update must execute the migration checklist:
-  mirror sync, integration branch creation, branch protection, XEV-001 test
-  and import, manifest and view updates, all-four-views provenance check,
-  overlay and patch removal, notices, CI, current-state sweep, and native
-  Windows validation.
-- During migration, update this ADR's `Release` field and every current-state
-  assertion listed in the policy checklist.
-- After migration, the fork integration history is the source of truth for
-  downstream libxev behavior. The overlay and audit patch are deleted.
+- The manifest pins `farbenbuilds/libxev` commit
+  `cbf01bc432a84cd91a99c1cb1031b46416d044c7`; no document or build step may
+  claim the upstream pin or the overlay is current.
+- The fork integration history is the source of truth for downstream libxev
+  behavior. The overlay and audit patch are deleted.
+- The native Windows runtime job and the XEV-001 re-arm regression remain the
+  behavioral gate for the fork commit.
 - No upstream contribution is made. Downstream fixes stay in the fork ledger.
 - Future Zig upgrades create a new integration branch instead of merging
   incompatible upstream history into the current one.
@@ -117,12 +110,11 @@ force until the migration lands.
 ## References
 
 - [docs/libxev_fork.md](../libxev_fork.md): normative policy, ledger, sync
-  commands, and migration checklist.
-- [ADR 0004](0004-windows-iocp-accept-and-queued-close.md): current Windows
-  IOCP overlay and queued-close decision.
+  commands, and migration record.
+- [ADR 0004](0004-windows-iocp-accept-and-queued-close.md): historical
+  Windows IOCP overlay and queued-close decision.
 - <https://github.com/farbenbuilds/libxev>: maintained downstream fork.
 - <https://github.com/mitchellh/libxev/issues/252>: upstream accept-lifecycle
   issue.
-- `build.zig.zon`, `patches/libxev_iocp_accept_socket.patch`,
-  `vendor/libxev_overlay/src/backend/iocp.zig`, and
+- `build.zig.zon`, `scripts/check_libxev_fork.sh`, and
   `scripts/check_vendor_overlay.sh`.

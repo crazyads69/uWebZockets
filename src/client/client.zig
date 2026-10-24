@@ -87,6 +87,9 @@ pub fn client(comptime max_inflight: usize) type {
             var initialized: usize = 0;
             errdefer for (self.slots[0..initialized]) |*slot| slot.timer.deinit();
             for (&self.slots, 0..) |*slot, index| {
+                // The slab is undefined storage; establish every default
+                // (notably `active`) before the first `is_active` query.
+                slot.* = .{};
                 slot.timer = try xev.Timer.init();
                 slot.slot_index = index;
                 initialized += 1;

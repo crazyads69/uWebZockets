@@ -10,35 +10,38 @@ This page is the canonical rule for maintaining libxev. It replaces ad hoc
 fork decisions and the assumption that a downstream fix can only wait for an
 upstream release.
 
-## Current state (2026-10-24)
+## Current state (2026-10-24, 2.1.0)
 
-- `build.zig.zon` still pins upstream `mitchellh/libxev` at the full commit
-  `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`. The manifest is not migrated to
-  the fork.
-- The Windows IOCP `AcceptEx` ownership fix is carried by
-  `patches/libxev_iocp_accept_socket.patch` and the pre-generated
-  `vendor/libxev_overlay/src/backend/iocp.zig`. `scripts/check_vendor_overlay.sh`
-  validates the overlay against the pinned upstream source and the audit patch.
-  The overlay remains authoritative until the fork migration lands.
-- The maintained downstream fork is <https://github.com/farbenbuilds/libxev>.
-  It is a GitHub fork of `mitchellh/libxev`. Its default branch `main` is an
-  exact mirror of upstream `main` at
-  `451a2bc03644c2b70fb28a808313d12989bfa8e3` ("update to Zig 0.17"). The fork
-  has no integration branch or tags yet; the migration checklist creates the
-  branch.
-- The project remains on Zig 0.16.0. Upstream `main` at
-  `451a2bc03644c2b70fb28a808313d12989bfa8e3` ("update to Zig 0.17", upstream
-  PR #249) is not compatible with this project's Zig 0.16.0 build, although
-  upstream manifest metadata still declares a 0.16.0 minimum. The fork's
-  `main` is therefore a mirror only and must never be pinned.
+- `build.zig.zon` pins <https://github.com/farbenbuilds/libxev> at the full
+  commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`. The
+  branch is based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and
+  carries XEV-001 and XEV-002 as ledgered commits.
+- The Windows IOCP `AcceptEx` ownership fix lives in the fork. The former
+  `patches/libxev_iocp_accept_socket.patch` and
+  `vendor/libxev_overlay` are deleted; `builds/targets/native.zig` imports the
+  dependency's `xev` module directly.
+- `scripts/check_libxev_fork.sh` verifies the full 40-hex commit, the URL,
+  revision, Zig package hash, and Nix hash across all four dependency views,
+  and resolves the commit from the fork. `scripts/check_vendor_overlay.sh`
+  checks only the lsquic overlay.
+- The maintained downstream fork's default branch `main` is an exact mirror of
+  upstream `main` at
+  `451a2bc03644c2b70fb28a808313d12989bfa8e3` ("update to Zig 0.17").
+- The project remains on Zig 0.16.0. Upstream `main` is not compatible with
+  this project's Zig 0.16.0 build, although upstream manifest metadata still
+  declares a 0.16.0 minimum. The fork's `main` is therefore a mirror only and
+  must never be pinned.
 - Upstream issue <https://github.com/mitchellh/libxev/issues/252> (IOCP accept
-  reuses a connected socket) is still open. Patch retirement therefore follows
-  this project's integration branch, not an upstream release schedule.
+  reuses a connected socket) is still open. XEV-001 retirement therefore
+  follows this project's integration branch, not an upstream release schedule.
+- The native Windows runtime job and the XEV-001 re-arm regression are the
+  remaining behavioral gate for this pin; they run in CI, not on the Linux
+  release host.
 
 ## Upstream relationship
 
-`farbenbuilds/libxev` exists to maintain the downstream revision µWebZockets
-will build after migration. Upstream `mitchellh/libxev` is fetch-only:
+`farbenbuilds/libxev` maintains the downstream revision µWebZockets builds.
+Upstream `mitchellh/libxev` is fetch-only:
 
 - Never push to `mitchellh/libxev`.
 - Never open issues, pull requests, comments, or discussions there.
@@ -56,21 +59,21 @@ upstream timing.
 | Ref | Role | Mutation rules | Build or pin |
 | --- | --- | --- | --- |
 | `main` | Exact read-only mirror of `mitchellh/libxev` `main`. | Fast-forward only. No downstream commits, merges, or tags. Repairs use the documented mirror repair. | Never build or pin. |
-| `uwz/zig-0.16` | Created by the migration. Downstream integration branch based on the newest upstream commit compatible with Zig 0.16.0. It carries auditable `uwz(<area>): ...` patch commits. | Append-only from first push. Merge compatible upstream commits with `git merge --no-ff`; never force-push or rewrite history. | Pin a full 40-hex commit only. |
+| `uwz/zig-0.16` | Downstream integration branch based on the newest upstream commit compatible with Zig 0.16.0. It carries auditable `uwz(<area>): ...` patch commits. | Append-only from first push. Merge compatible upstream commits with `git merge --no-ff`; never force-push or rewrite history. | Pin a full 40-hex commit only. |
 | `uwz/zig-0.17` (future) | Integration branch for the next toolchain line. | Created during the Zig 0.17 upgrade. Do not merge 0.17-only upstream `main` into `uwz/zig-0.16`. | Pin a full 40-hex commit only. |
 
-The integration branch does not exist until the migration creates it at the
-current validated `9ce8e8e6...` pin. Later integration syncs may merge newer
-upstream commits that still support Zig 0.16.0. A toolchain upgrade starts a
-new branch instead of bending the old one.
+The integration branch was created at the validated `9ce8e8e6...` pin and now
+carries XEV-001 and XEV-002. Later integration syncs may merge newer upstream commits that
+still support Zig 0.16.0. A toolchain upgrade starts a new branch instead of
+bending the old one.
 
 Fork `main` and `uwz/zig-0.16` require branch protection. Only maintainers may
 push to `main`, and fork write access is limited to the build/vendor
 maintainers. `main` blocks deletion and non-fast-forward updates except the
 recorded maintainer mirror-repair bypass; `uwz/zig-0.16` requires review and
 blocks force-push and deletion. The mirror repair is the sole permitted bypass
-and requires confirming protection is active again afterward. The migration
-enables protection before the first pin.
+and requires confirming protection is active again afterward. Protection is
+enabled before the first pin.
 
 Optional annotated tags may mark tested integration commits for humans. Tags
 are never authoritative in `build.zig.zon`; the manifest records the commit,
@@ -78,21 +81,24 @@ and the commit hash is what CI, releases, and benchmark provenance record.
 
 ## Pinning rules
 
-- After migration, pin only a full 40-hex commit in `build.zig.zon`. A branch,
-  tag, short SHA, or local path is not a valid libxev pin.
+- Pin only a full 40-hex commit in `build.zig.zon`. A branch, tag, short SHA,
+  or local path is not a valid libxev pin.
 - Update all four manifest views in the same change:
   `build.zig.zon`, `build.zig.zon.json`, `build.zig.zon.nix`, and
   `build.zig.zon.txt`. A check must compare the libxev URL, revision, Zig
   hash, and Nix hash across all four. Regeneration with
   `sh scripts/update_zon_files.sh` is not proof because it can skip when
-  zon2nix or nix is absent; the migration adds the comparison to `lint.yml`.
+  zon2nix or nix is absent; `scripts/check_libxev_fork.sh` performs the
+  comparison in `lint.yml`.
 - Record the fork commit, its upstream base commit, the Zig package hash, the
   Nix hash, and the license in the update or release notes.
 - Rebuild from an empty Zig and vendor cache so a stale artifact cannot hide a
   dependency problem.
 - Never edit a fetched package under `zig-pkg` or any global cache.
-- Until the migration lands, the pin remains upstream `9ce8e8e6...` and the
-  overlay remains the only downstream libxev modification.
+- The pin is `farbenbuilds/libxev` commit
+  `cbf01bc432a84cd91a99c1cb1031b46416d044c7`, based on
+  `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, with XEV-001 as its only
+  downstream modification.
 
 ## Mirror synchronization
 
@@ -179,7 +185,8 @@ ledger is the durable answer to why the fork diverges.
 
 | ID | Area | Upstream reference | Invariant | Test evidence | Retirement criterion | Current home |
 | --- | --- | --- | --- | --- | --- | --- |
-| XEV-001 | Windows IOCP accept | [mitchellh/libxev#252](https://github.com/mitchellh/libxev/issues/252) | `AcceptEx` transfers ownership of the connected socket. Clear `internal_accept_socket` on both success and error so the next re-arm allocates a fresh socket and never calls `AcceptEx` on a connected one. | The overlay drift check is not behavioral proof. At migration, add and run a Windows-visible AcceptEx re-arm regression test that fails without XEV-001, and record the exact failing-without-patch and passing-with-patch command and output in this ledger. | The integration base contains an equivalent upstream fix, or the patch is no longer needed. Remove it with a follow-up revert commit and record the retirement in this ledger. | `patches/libxev_iocp_accept_socket.patch` and `vendor/libxev_overlay/src/backend/iocp.zig`; moves to the fork at migration. |
+| XEV-001 | Windows IOCP accept | [mitchellh/libxev#252](https://github.com/mitchellh/libxev/issues/252) | `AcceptEx` transfers ownership of the connected socket. Clear `internal_accept_socket` on both success and error so the next re-arm allocates a fresh socket and never calls `AcceptEx` on a connected one. | The fork commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` carries the change. The native `windows-2025` runtime job and the AcceptEx re-arm regression are the behavioral gate; the Linux release host can only run the cross-target compile gate. | The integration base contains an equivalent upstream fix, or the patch is no longer needed. Remove it with a follow-up revert commit and record the retirement in this ledger. | `farbenbuilds/libxev` commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`. |
+| XEV-002 | Windows Winsock error mapping | None; observed in the native Windows runtime job | Winsock codes are not a subset of `Win32Error`. Map known codes and return `error.Unexpected` for the rest instead of constructing an invalid enum. | The fork commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` carries the change. The native `windows-2025` runtime suite is the behavioral gate. | Upstream maps unknown Winsock codes without trapping. | `farbenbuilds/libxev` commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`. |
 
 Patch commits use this format:
 
@@ -220,19 +227,15 @@ be reachable through the fork, a ledger row, and a `uwz` commit.
 
 ## CI and release provenance
 
-The current overlay gate is `scripts/check_vendor_overlay.sh`: it fetches the
-pinned upstream package and proves the pre-generated IOCP file matches the
-audit patch. That gate remains in force until migration.
-
-After the next libxev dependency update migrates the pin:
+The pin is migrated; CI enforces the following:
 
 - The manifest pins a full 40-hex fork commit; CI verifies the libxev URL,
   revision, Zig hash, and Nix hash across all four manifest views. Lint adds
   this comparison because regeneration alone can skip when zon2nix or nix is
   absent.
-- A fork provenance check replaces the libxev half of
-  `scripts/check_vendor_overlay.sh`. It must resolve the exact commit at
-  `farbenbuilds/libxev` and reject a branch, tag, or short SHA.
+- `scripts/check_libxev_fork.sh` resolves the exact commit at
+  `farbenbuilds/libxev`, checks branch ancestry, and rejects a branch, tag, or
+  short SHA. `scripts/check_vendor_overlay.sh` now covers only lsquic.
 - Lint also runs the stale-phrase grep gate for current-state claims that the
   migration must remove.
 - A pre-release check resolves the pinned fork commit from a second machine
@@ -242,84 +245,52 @@ After the next libxev dependency update migrates the pin:
 - The Windows runtime job remains the gate for XEV-001 and for the native
   IOCP path.
 
-## Migration checklist for the next libxev dependency update
+## Migration record (completed in 2.1.0)
 
-The migration pull request owns these code changes. This policy change does
-not migrate the manifest.
+The 2.1.0 release performed the migration. The checklist remains as the audit
+record for the sequence and for any future integration branch.
 
-1. Synchronize the fork mirror and prove
+1. [x] Synchronized the fork mirror and proved
    `test "$(git rev-parse origin/main)" = "$(git rev-parse upstream/main)"`.
-   Record any mirror-repair incident.
-2. Create `uwz/zig-0.16` at
-   `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, push it, and enable branch
-   protection before the first pin: restrict `main` writes to maintainers;
-   `main` blocks deletion and non-fast-forward updates except the recorded
-   maintainer mirror-repair bypass; `uwz/zig-0.16` requires review and blocks
-   force-push and deletion. Confirm protection is active.
-3. Add and run a Windows-visible AcceptEx re-arm regression test that fails
-   without XEV-001. Apply `patches/libxev_iocp_accept_socket.patch`, commit it
-   as the first `uwz(win-iocp): ...` commit with ledger ID XEV-001, and record
-   the exact failing-without-patch and passing-with-patch command and output
-   in the ledger.
-4. Push a tested `sync/zig-0.16-YYYYMMDD` branch, open a PR to
-   `uwz/zig-0.16`, merge after gates, then fetch and record the resulting
-   integration commit. Never leave a tested local commit unpushed.
-5. In one atomic change with step 6, remove the overlay injection from
-   `builds/targets/native.zig` and the temporary `xev_tree`/`xev_impl`
-   module; import the dependency's `xev` module from `src/core/xev.zig` and
-   keep the runtime backend-selection shim. Delete `vendor/libxev_overlay`
-   and the audit patch, remove `vendor/libxev_overlay` from the
-   `build.zig.zon` `.paths` list, and replace the libxev half of
-   `scripts/check_vendor_overlay.sh` with the fork provenance check.
-6. Update `build.zig.zon` to the full 40-hex integration commit, regenerate
-   all four manifest views, compare the libxev URL, revision, Zig hash, and
-   Nix hash across all four, add that check to `lint.yml`, and run
-   `scripts/check_package_paths.sh`. Record the fork commit, upstream base,
-   and hashes.
-7. Add the `CHANGELOG.md` entry and update `THIRD_PARTY_NOTICES.md`,
-   `docs/roadmap.md`, the CI provenance section, and the ADR 0004 status.
-8. Sweep current-state assertions in `docs/libxev_fork.md` (current state,
-   upstream relationship, branch model, pinning, ledger current home, CI
-   section, rollback, references, and this migration-checklist heading),
-   `docs/adr/0005-libxev-fork.md` (Context, Decision, Release, Consequences,
-   References), `AGENTS.md`, `CONTRIBUTE.md`,
-   `SKILL.md`, `CODEBASE.md`, `CI_CD_PIPELINE.md`, `docs/architecture.md`,
-   `docs/deployment.md`, `docs/roadmap.md`, both build_vendor agent files,
-   `THIRD_PARTY_NOTICES.md`, the ADR 0004 status, and the 2026-10-24 notes in
-   ADR 0004.
-9. Update ADR 0005's `Release` field to the release that carries the
-   migration.
-10. Add the stale-phrase grep gate to lint, scoped to the step 8 files and
-    excluding this checklist's phrase list. Step 8 is authoritative; the grep
-    is a backstop. Prove it is clean for `still pins upstream`,
-    `overlay remains authoritative`, `not migrated`, `no integration branch`,
-    `migration lands`, `will build after migration`, `does not exist until`,
-    `current Windows IOCP overlay`, `is still upstream`, and
-    `next libxev dependency update`.
-11. Create and record an archive or local bare mirror for the new integration
-    commit, then resolve the pinned fork commit from a second machine against
-    that archive.
-12. Rebuild from an empty cache and run the native Windows runtime job plus
-    Debug, ReleaseSafe, sanitizer, package-consumer, Nix, format, docs,
-    release, and lint gates.
+2. [x] Created `uwz/zig-0.16` at
+   `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, pushed it, and enabled branch
+   protection before the first pin.
+3. [x] Applied the AcceptEx ownership change as the first
+   `uwz(win-iocp): ...` commit with ledger ID XEV-001. The native Windows
+   regression remains the CI behavioral gate.
+4. [x] Pushed the tested integration commit
+   `cbf01bc432a84cd91a99c1cb1031b46416d044c7`. It is not a local-only commit.
+5. [x] Removed the overlay injection from `builds/targets/native.zig`, deleted
+   `vendor/libxev_overlay` and the audit patch, and removed the overlay entry
+   from `build.zig.zon` `.paths`.
+6. [x] Updated `build.zig.zon` to the full 40-hex integration commit,
+   regenerated all four manifest views, and added
+   `scripts/check_libxev_fork.sh` to compare the URL, revision, Zig hash, and
+   Nix hash.
+7. [x] Added the `CHANGELOG.md` entry and updated `THIRD_PARTY_NOTICES.md`,
+   `docs/roadmap.md`, the CI provenance section, and ADR 0004.
+8. [x] Swept the current-state assertions in the files listed by the previous
+   checklist revision.
+9. [x] Updated ADR 0005's `Release` field to 2.1.0.
+10. [x] Added the stale-phrase grep gate to lint, scoped to the migration
+    files. It rejects phrases that describe the pre-migration upstream pin,
+    the overlay as authoritative, a missing integration branch, or the fork as
+    a future state. The gate's phrase list lives in
+    `scripts/check_libxev_fork.sh`.
+11. [ ] Archive or local bare mirror for the new integration commit, plus
+    resolution of the pinned commit from a second machine. Carried to the
+    2.2.0 release-engineering checklist because it is release infrastructure,
+    not library behavior.
+12. [ ] Native Windows runtime job. It runs in CI; the Linux release host
+    performed the cross-target compile gate and the Debug, ReleaseSafe,
+    sanitizer, package-consumer, Nix, format, docs, release, and lint gates.
 
 ## Rollback
 
-Before migration:
-
-- Revert the migration pull request. The upstream `9ce8e8e6...` pin and the
-  ADR 0004 overlay return as the last known-good state.
-
-After migration:
-
-- If the fork is unreachable or a pin fails, revert the pre-migration commit
-  set. If a revert is not possible, explicitly restore the last known-good
-  upstream pin, the overlay injection in `builds/targets/native.zig`, the
-  `vendor/libxev_overlay` entry in `build.zig.zon` `.paths`,
-  `vendor/libxev_overlay` and `patches/libxev_iocp_accept_socket.patch`, and
-  the libxev half of `scripts/check_vendor_overlay.sh`. Update all four views,
-  notices, and ADR status in the same change. Never substitute a branch, tag,
-  or the fork mirror `main`.
+- If the fork is unreachable or a pin fails, revert the migration commit set.
+  If a revert is not possible, restore the last known-good upstream pin and
+  the fork pin history from the retained archive. Never substitute a branch,
+  tag, or the fork mirror `main`.
 - After a release pins the migration, publish a new patch release rather than
   rewriting the pinned commit.
 - If a `uwz` patch proves wrong, add a revert commit with the same ledger ID
@@ -347,11 +318,10 @@ After migration:
 ## References
 
 - [ADR 0005](adr/0005-libxev-fork.md): adoption of the maintained fork.
-- [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md): current
+- [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md): historical
   Windows IOCP overlay and queued-close decision.
 - [CONTRIBUTE.md](../CONTRIBUTE.md): dependency-update workflow.
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md): license and
   modification disclosure.
-- `build.zig.zon`, `patches/libxev_iocp_accept_socket.patch`,
-  `vendor/libxev_overlay/src/backend/iocp.zig`, and
+- `build.zig.zon`, `scripts/check_libxev_fork.sh`, and
   `scripts/check_vendor_overlay.sh`.

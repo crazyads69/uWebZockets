@@ -67,6 +67,10 @@ pub const Parser = struct {
     state: State = .status_line,
     /// Next unparsed raw byte in the accumulator.
     mark: usize = 0,
+    /// Absolute input offset where the next delimiter search resumes.
+    scan: usize = 0,
+    /// Bytes examined by delimiter searches for the current response.
+    scan_work: usize = 0,
     /// First decoded body byte.
     body_start: usize = 0,
     /// Decoded body byte count.
@@ -145,10 +149,17 @@ pub const Parser = struct {
         const tail = self.body_start + self.body_length;
         if (self.mark <= tail) return raw_len;
 
+        const shift = self.mark - tail;
         const remaining = raw_len - self.mark;
         std.mem.copyForwards(u8, buffer[tail .. tail + remaining], buffer[self.mark..raw_len]);
         self.mark = tail;
-        return tail + remaining;
+        // Rebase the scan cursor by the same shift, clamp it to the retained
+        // range, and never let it move behind the new mark.
+        self.scan = if (self.scan > shift) self.scan - shift else tail;
+        self.scan = @max(self.scan, tail);
+        const new_raw_len = tail + remaining;
+        self.scan = @min(self.scan, new_raw_len);
+        return new_raw_len;
     }
 
     /// Reports whether the head has been fully parsed.
@@ -170,16 +181,21 @@ pub const Parser = struct {
     }
 
     fn parse_status_line(self: *Parser, buffer: []u8, raw_len: usize) ?Progress {
-        const relative = std.mem.indexOfScalar(u8, buffer[self.mark..raw_len], '\n') orelse {
+        const start = @min(@max(self.mark, self.scan), raw_len);
+        const search = buffer[start..raw_len];
+        self.scan_work += search.len;
+        const relative = std.mem.indexOfScalar(u8, search, '\n') orelse {
+            self.scan = raw_len;
             if (raw_len > self.head_limit) return self.fail(.head_too_large);
             return .need_more;
         };
-        const newline = self.mark + relative;
+        const newline = start + relative;
         if (newline == self.mark or buffer[newline - 1] != '\r') return self.fail(.malformed);
 
         const line = buffer[self.mark .. newline - 1];
         const code = parse_status_code(line) orelse return self.fail(.malformed);
         self.mark = newline + 1;
+        self.scan = self.mark;
 
         if (code < 200) {
             if (code != 100) return self.fail(.unexpected_interim);
@@ -202,6 +218,7 @@ pub const Parser = struct {
             buffer[self.mark + 1] == '\n')
         {
             self.mark += 2;
+            self.scan = self.mark;
             self.state = .status_line;
             return null;
         }
@@ -214,6 +231,7 @@ pub const Parser = struct {
         if (validate_field_lines(buffer[self.mark..end])) |failure| return self.fail(failure);
 
         self.mark = end + 4;
+        self.scan = self.mark;
         self.state = .status_line;
         return null;
     }
@@ -283,6 +301,7 @@ pub const Parser = struct {
         self.head_complete = true;
         self.body_start = head_end;
         self.mark = head_end;
+        self.scan = head_end;
 
         if (body_forbidden) {
             self.state = .done;
@@ -312,16 +331,21 @@ pub const Parser = struct {
         }
         self.body_length = self.content_length;
         self.mark = self.body_start + self.content_length;
+        self.scan = self.mark;
         self.state = .done;
         return .{ .complete = self.view(buffer) };
     }
 
     fn parse_chunk_size(self: *Parser, buffer: []u8, raw_len: usize) ?Progress {
-        const relative = simd.index_of_either_byte(buffer[self.mark..raw_len], '\r', ';') orelse {
+        const start = @min(@max(self.mark, self.scan), raw_len);
+        const search = buffer[start..raw_len];
+        self.scan_work += search.len;
+        const relative = simd.index_of_either_byte(search, '\r', ';') orelse {
+            self.scan = raw_len;
             if (raw_len - self.mark > 1024) return self.fail(.malformed);
             return .need_more;
         };
-        const end = self.mark + relative;
+        const end = start + relative;
         const hex = buffer[self.mark..end];
         if (hex.len == 0 or hex.len > 16) return self.fail(.malformed);
         for (hex) |byte| {
@@ -334,24 +358,33 @@ pub const Parser = struct {
 
         if (buffer[end] == ';') {
             self.mark += 1;
+            self.scan = self.mark;
             self.state = .chunk_ext;
             return null;
         }
         self.mark = end;
+        self.scan = end;
         self.state = .chunk_size_end;
         return null;
     }
 
     fn parse_chunk_ext(self: *Parser, buffer: []u8, raw_len: usize) ?Progress {
-        const relative = simd.index_of_crlf(buffer[self.mark..raw_len]) orelse {
+        const start = @min(@max(self.mark, self.scan), raw_len);
+        const search = buffer[start..raw_len];
+        self.scan_work += search.len;
+        const relative = simd.index_of_crlf(search) orelse {
+            // Keep a one-byte overlap so a trailing CR is rechecked with the
+            // next read instead of being skipped.
+            self.scan = if (raw_len > start) raw_len - 1 else start;
             if (raw_len - self.mark > 1024) return self.fail(.malformed);
             return .need_more;
         };
-        const end = self.mark + relative;
+        const end = start + relative;
         for (buffer[self.mark..end]) |byte| {
             if ((byte < 32 and byte != '\t') or byte == 127) return self.fail(.malformed);
         }
         self.mark = end + 2;
+        self.scan = self.mark;
         if (self.chunk_length == 0) {
             self.state = .chunk_trailer;
             return null;
@@ -361,11 +394,15 @@ pub const Parser = struct {
     }
 
     fn parse_chunk_size_end(self: *Parser, buffer: []u8, raw_len: usize) ?Progress {
-        if (raw_len - self.mark < 2) return .need_more;
+        if (raw_len - self.mark < 2) {
+            self.scan = self.mark;
+            return .need_more;
+        }
         if (buffer[self.mark] != '\r' or buffer[self.mark + 1] != '\n') {
             return self.fail(.malformed);
         }
         self.mark += 2;
+        self.scan = self.mark;
         if (self.chunk_length == 0) {
             self.state = .chunk_trailer;
             return null;
@@ -385,16 +422,21 @@ pub const Parser = struct {
         );
         self.body_length += self.chunk_length;
         self.mark += self.chunk_length;
+        self.scan = self.mark;
         self.state = .chunk_crlf;
         return null;
     }
 
     fn parse_chunk_crlf(self: *Parser, buffer: []u8, raw_len: usize) ?Progress {
-        if (raw_len - self.mark < 2) return .need_more;
+        if (raw_len - self.mark < 2) {
+            self.scan = self.mark;
+            return .need_more;
+        }
         if (buffer[self.mark] != '\r' or buffer[self.mark + 1] != '\n') {
             return self.fail(.malformed);
         }
         self.mark += 2;
+        self.scan = self.mark;
         self.state = .chunk_size;
         return null;
     }
@@ -405,6 +447,7 @@ pub const Parser = struct {
             buffer[self.mark + 1] == '\n')
         {
             self.mark += 2;
+            self.scan = self.mark;
             self.state = .done;
             return .{ .complete = self.view(buffer) };
         }
@@ -417,6 +460,7 @@ pub const Parser = struct {
         if (validate_trailers(buffer[self.mark..end])) |failure| return self.fail(failure);
 
         self.mark = end + 4;
+        self.scan = self.mark;
         self.state = .done;
         return .{ .complete = self.view(buffer) };
     }
@@ -428,9 +472,19 @@ pub const Parser = struct {
         return .need_more;
     }
 
-    fn find_header_end(self: *const Parser, buffer: []u8, raw_len: usize) ?usize {
-        const relative = simd.index_of_header_end(buffer[self.mark..raw_len]) orelse return null;
-        return self.mark + relative;
+    fn find_header_end(self: *Parser, buffer: []u8, raw_len: usize) ?usize {
+        // Keep a three-byte overlap so a terminator split across reads is
+        // found without rescanning the accumulated prefix.
+        const start = @min(@max(self.mark, self.scan -| 3), raw_len);
+        const search = buffer[start..raw_len];
+        self.scan_work += search.len;
+        const relative = simd.index_of_header_end(search) orelse {
+            self.scan = raw_len;
+            return null;
+        };
+        const end = start + relative;
+        self.scan = end + 4;
+        return end;
     }
 };
 

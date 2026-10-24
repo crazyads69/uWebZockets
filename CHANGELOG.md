@@ -3,6 +3,104 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [2.1.0] - 2026-10-24
+
+Release that moves deadlines onto a per-worker hierarchical timing wheel,
+parks delayed responses without blocking the loop, removes the libxev source
+overlay in favor of the maintained fork, and closes the three v2.0.5 hot-path
+follow-ups.
+
+### Added
+
+- `src/core/timer_wheel.zig`: allocation-free four-level timing wheel with
+  256 one-millisecond slots, 64 256-ms slots, 64 16.4-second slots, and 64
+  17.5-minute slots. Nodes are intrusive and embedded in the connection slab;
+  deadlines beyond the level-3 range wait in an overflow list and enter the
+  wheel when they come into range.
+- `core/timer.zig` `Scheduler`: one persistent libxev timer per worker loop.
+  It wakes on a bounded five-millisecond tick while deadlines exist, advances
+  and cascades the wheel, and re-arms through the backend action instead of
+  calling `run` inside its own callback. It never resets or reuses a
+  completion, and `stop` lets the tick disarm instead of canceling. The old
+  five-second pool sweep is gone for idle connections.
+- `AsyncResponse.sleep` and `AsyncResponse.sleep_complete`: zero-allocation
+  request parking backed by connection-owned timer nodes. HTTP/1 uses slot 0
+  and HTTP/2 maps one slot per stream; an expired or reused generation fails
+  closed.
+- `examples/delay_server.zig` and the `delay_server` build step implement the
+  bounded `/delay/:ms` profile.
+- `ServerConfig.header_read_timeout_ms` and
+  `Builder.with_header_read_timeout_ms`: incomplete request heads and bodies
+  now have a separate deadline from a drained keep-alive connection.
+- `middleware.RateLimitTable`, `rate_limit_indexed`, and caller-owned index
+  and LRU storage. Indexed tables provide O(1) expected lookup and insert,
+  exact-oldest eviction with lowest-index tie break, and an amortized rehash
+  after churn.
+- The HTTP/1 client response parser keeps a monotonic `scan` cursor across
+  reads for status lines, header and trailer terminators, chunk sizes, chunk
+  extensions, and split chunk CR/LF pairs.
+- `ws.PubSubEngine` now keeps stable topic ids, per-topic intrusive subscriber
+  lists, and open-addressed topic and subscription indexes. Publish work is
+  proportional to the live subscribers of the published topic.
+
+### Changed
+
+- `build.zig.zon` pins `farbenbuilds/libxev` at
+  `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on the `uwz/zig-0.16`
+  integration branch. The branch is based on upstream
+  `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries XEV-001 as a
+  ledgered fork commit.
+- `builds/targets/native.zig` imports the dependency's `xev` module directly;
+  the `xev_tree` copy step, `vendor/libxev_overlay`, and
+  `patches/libxev_iocp_accept_socket.patch` are deleted.
+- `scripts/check_vendor_overlay.sh` now checks only the lsquic overlay.
+  `scripts/check_libxev_fork.sh` verifies the full 40-hex fork commit, all four
+  dependency views, and remote reachability.
+- All four dependency views (`build.zig.zon`, `.json`, `.nix`, `.txt`) carry
+  the fork URL, revision, Zig package hash, and Nix hash.
+- The default `TcpConnection` gains one idle timer node and nine parking slots;
+  the default slab total moves from `681_752_192` to `683_382_400` bytes.
+
+### Fixed
+
+- A keep-alive connection that receives a partial request now uses the header
+  deadline instead of the full idle deadline, and a parked response cancels
+  the idle deadline so a long delay cannot be reaped mid-flight.
+- A timing-wheel callback that cancels a sibling in the same slot, re-arms the
+  dispatching node, or schedules during cascade is handled without double
+  delivery or list corruption.
+- The client parser no longer rescans the accumulated response prefix on
+  every read; byte-at-a-time delivery is linear in the wire size.
+- A full indexed rate-limit table no longer scans every bucket to find the
+  oldest key; an evicted key still starts with zero tokens.
+- `client(N).init` initializes every slot's lifecycle state. A setup failure
+  before the first fetch can no longer make `deinit` observe an undefined
+  `active` flag and abort.
+- Pub/sub fan-out no longer visits every global subscription row, and topic id
+  reuse cannot misdeliver to a subscriber of another topic.
+
+### Security
+
+- XEV-001 remains the only downstream libxev patch and is now an auditable
+  fork commit rather than an unversioned source overlay. The Windows native
+  AcceptEx re-arm regression remains the release gate for that commit.
+- Indexed rate limiting bounds probe work after eviction churn and preserves
+  the fail-closed empty-table behavior.
+- Topic and subscription indexes fail closed when capacity is exhausted; no
+  new allocation, lock, or cross-thread state enters the publish path.
+
+### Limits
+
+- The v2.0.0 quiet-host performance evidence (2.1-C1), receive-side UDP GRO
+  (2.1-C2), cross-process listener handoff (2.1-C4), and optional API
+  follow-ups (2.1-C5) are carried to 2.2.0 and later; see `TODO.md`.
+- The native Windows runtime job compiles the full tree and runs XEV-001 and
+  XEV-002, but it is not green as of 2026-10-24: the Windows cross-target
+  compile gate passes while the runtime suite still reports client connect
+  mapping, one timer assertion, the static-file `std.Io` positional read, and
+  three TLS cluster handshake failures. Windows remains compile-only; the raw
+  run and remaining test list are carried in `TODO.md` 2.2-C4.
+
 ## [2.0.6] - 2026-10-23
 
 Patch release that makes the source package self-contained for downstream

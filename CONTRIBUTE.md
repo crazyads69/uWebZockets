@@ -93,11 +93,9 @@ project overrides take precedence over vendored defaults.
   transport abstractions (POSIX and Windows IOCP via `libxev`).
 - Submit non-libxev dependency fixes to the upstream project rather than
   rewriting vendored files without an auditable patch. libxev is the
-  exception: the maintained fork relationship is policy now, but the
-  `uwz/zig-0.16` integration branch is created by the migration. Until then
-  keep the upstream `9ce8e8e` pin and ADR 0004 IOCP overlay, and never send
-  patches to `mitchellh/libxev`; see
-  [docs/libxev_fork.md](docs/libxev_fork.md).
+  exception: the `uwz/zig-0.16` integration branch exists and carries XEV-001 and XEV-002;
+  the manifest pins a full fork commit. Never send patches to
+  `mitchellh/libxev`; see [docs/libxev_fork.md](docs/libxev_fork.md).
 
 ## Local checks
 
@@ -180,12 +178,11 @@ a stale artifact cannot hide a dependency problem.
 
 The maintained downstream fork is <https://github.com/farbenbuilds/libxev>,
 and that relationship is policy now. The `uwz/zig-0.16` integration branch
-does not exist until the migration; until then the upstream `9ce8e8e` pin and
-the ADR 0004 IOCP overlay remain authoritative. Upstream `mitchellh/libxev` is
-fetch-only: do not push, open issues or pull requests, comment, or send patches
-there.
+exists at `cbf01bc` and carries XEV-001 and XEV-002; the manifest pins that full commit and
+the ADR 0004 IOCP overlay is removed. Upstream `mitchellh/libxev` is fetch-only:
+do not push, open issues or pull requests, comment, or send patches there.
 
-After migration, the update procedure is:
+The update procedure is:
 
 1. Synchronize the fork mirror with a fast-forward merge, push it, then
    `git fetch origin main` and prove

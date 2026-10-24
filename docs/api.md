@@ -143,14 +143,29 @@ An async token is copyable, generation-checked, and completes exactly once:
 
 ```zig
 fn deferred(_: *uz.Request, token: uz.AsyncResponse) void {
-    // Hand the token to a worker or timer, then complete it on this loop.
+    // Hand the token to a worker, then complete it on this loop.
     token.complete("200 OK", "later") catch {};
+}
+
+fn delayed(req: *uz.Request, token: uz.AsyncResponse) void {
+    const delay_ms = std.fmt.parseInt(u64, req.get_param("ms") orelse "0", 10) catch 0;
+    // Borrowed fields are retained in the connection-owned parking slot.
+    token.sleep_complete(delay_ms, "200 OK", "Content-Type: text/plain\r\n", "later") catch {};
 }
 ```
 
 A pending token keeps the request buffer or HTTP/3 stream from being reused.
 Complete it on the owning event loop; marshal cross-thread results back to that
-loop before completing.
+loop before completing. `sleep` parks a custom resume callback;
+`sleep_complete` parks a response with borrowed fields. HTTP/1 uses one
+connection-owned slot and HTTP/2 maps one slot per stream, so neither allocates.
+A disconnected peer, a reused generation, or an expired token fails closed.
+
+`ServerConfig.idle_timeout_ms` bounds a drained keep-alive connection.
+`ServerConfig.header_read_timeout_ms` bounds an incomplete HTTP/1 request head
+or body; HTTP/2 header blocks are bounded by `max_h2_header_block_size` and the
+connection idle deadline. Both use the per-worker timing wheel; zero disables
+the corresponding deadline.
 
 ## WebSocket, static files, RPC, OpenAPI
 

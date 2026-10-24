@@ -319,6 +319,291 @@ pub const RateLimitDecision = struct {
     retry_after_seconds: u64,
 };
 
+/// Empty/open-addressing marker for an index entry.
+const no_index = std.math.maxInt(u32);
+
+/// One open-addressed key entry in a `RateLimitTable`.
+pub const RateLimitIndexSlot = struct {
+    key: u64 = 0,
+    bucket: u32 = no_index,
+    used: bool = false,
+    tombstone: bool = false,
+};
+
+/// Per-bucket LRU link. `order` is a monotonic touch sequence; the head is
+/// always the exact-oldest bucket.
+pub const RateLimitLink = struct {
+    next: u32 = no_index,
+    prev: u32 = no_index,
+    order: u64 = 0,
+};
+
+/// Caller-owned O(1) index and LRU over a fixed token-bucket table.
+///
+/// `slots.len` must be at least `2 * buckets.len`; `links.len` must equal
+/// `buckets.len`. The table rebuilds its index at construction so a restored
+/// or pre-seeded bucket array keeps the documented placement and eviction
+/// order. Exactly one `RateLimit` owns a live table.
+pub const RateLimitTable = struct {
+    buckets: []RateLimitBucket,
+    slots: []RateLimitIndexSlot,
+    links: []RateLimitLink,
+    head: u32 = no_index,
+    tail: u32 = no_index,
+    free_head: u32 = no_index,
+    live: usize = 0,
+    tombstones: usize = 0,
+    /// Monotonic touch sequence used to order the LRU in O(1).
+    sequence: u64 = 0,
+    /// Test/diagnostic counter for probe work; never used for decisions.
+    probe_count: usize = 0,
+
+    pub const InitError = error{
+        InvalidIndexCapacity,
+        DuplicateRateLimitKey,
+    };
+
+    /// Builds the lookup index and LRU from the caller-owned buckets.
+    pub fn init(
+        buckets: []RateLimitBucket,
+        slots: []RateLimitIndexSlot,
+        links: []RateLimitLink,
+    ) InitError!RateLimitTable {
+        if (buckets.len != 0 and slots.len < buckets.len * 2) {
+            return error.InvalidIndexCapacity;
+        }
+        if (links.len != buckets.len) return error.InvalidIndexCapacity;
+        var table = RateLimitTable{
+            .buckets = buckets,
+            .slots = slots,
+            .links = links,
+        };
+        try table.rebuild();
+        return table;
+    }
+
+    /// Rebuilds the index and free list from the current bucket contents.
+    pub fn rebuild(self: *RateLimitTable) InitError!void {
+        @memset(self.slots, .{});
+        self.head = no_index;
+        self.tail = no_index;
+        self.free_head = no_index;
+        self.live = 0;
+        self.tombstones = 0;
+        self.sequence = 0;
+
+        for (self.buckets, 0..) |bucket, index| {
+            if (bucket.last_refill_ns == 0) {
+                self.links[index] = .{ .next = self.free_head };
+                self.free_head = @intCast(index);
+                continue;
+            }
+            const slot = self.find_insert_slot(bucket.key) orelse
+                return error.InvalidIndexCapacity;
+            if (slot.duplicate) return error.DuplicateRateLimitKey;
+            self.slots[slot.index] = .{
+                .key = bucket.key,
+                .bucket = @intCast(index),
+                .used = true,
+            };
+            self.link_ordered(@intCast(index), bucket.last_refill_ns);
+            self.live += 1;
+        }
+        self.assign_orders();
+    }
+
+    /// Inserts a bucket into the rebuilt LRU by (timestamp, index) order.
+    ///
+    /// Construction is the only O(n) path; live touches use `append_tail`.
+    fn link_ordered(self: *RateLimitTable, bucket_index: u32, timestamp: i128) void {
+        var position = self.tail;
+        while (position != no_index) {
+            const other = self.buckets[position];
+            if (other.last_refill_ns < timestamp) break;
+            if (other.last_refill_ns == timestamp and position < bucket_index) break;
+            position = self.links[position].prev;
+        }
+        const link = &self.links[bucket_index];
+        link.prev = position;
+        link.next = if (position == no_index) self.head else self.links[position].next;
+        if (link.next != no_index) {
+            self.links[link.next].prev = bucket_index;
+        } else {
+            self.tail = bucket_index;
+        }
+        if (position == no_index) {
+            self.head = bucket_index;
+        } else {
+            self.links[position].next = bucket_index;
+        }
+    }
+
+    fn assign_orders(self: *RateLimitTable) void {
+        var position = self.head;
+        while (position != no_index) : (position = self.links[position].next) {
+            self.sequence += 1;
+            self.links[position].order = self.sequence;
+        }
+    }
+
+    /// Returns the bucket index for `key`, inserting or evicting as needed.
+    ///
+    /// A hit refreshes the LRU position. A free-capacity insert is O(1)
+    /// expected. A full-table miss evicts the exact oldest bucket; equal
+    /// timestamps keep the lowest bucket index first.
+    pub fn locate(self: *RateLimitTable, key: u64) ?BucketSlot {
+        if (self.slots.len == 0) return null;
+        // Bound probe cost after churn. Rebuilding before a mutation keeps
+        // the bucket and index views consistent for the caller.
+        if (self.tombstones > self.slots.len / 4) {
+            self.reindex() catch return null;
+        }
+        var index = bucket_home(key, self.slots.len);
+        var insert_at: ?usize = null;
+        var probes: usize = 0;
+        while (probes < self.slots.len) : (probes += 1) {
+            self.probe_count += 1;
+            const slot = self.slots[index];
+            if (slot.used) {
+                if (slot.key == key) {
+                    self.touch(slot.bucket);
+                    return .{ .index = slot.bucket, .matched = true, .evicted = false };
+                }
+            } else if (slot.tombstone) {
+                if (insert_at == null) insert_at = index;
+            } else {
+                break;
+            }
+            index = if (index + 1 == self.slots.len) 0 else index + 1;
+        }
+        if (probes >= self.slots.len) {
+            self.rebuild() catch return null;
+            return self.locate(key);
+        }
+
+        const target = insert_at orelse index;
+        var bucket_index: u32 = undefined;
+        var evicted = false;
+        if (self.free_head != no_index) {
+            bucket_index = self.free_head;
+            self.free_head = self.links[bucket_index].next;
+            self.live += 1;
+        } else if (self.live < self.buckets.len) {
+            self.rebuild() catch return null;
+            return self.locate(key);
+        } else {
+            bucket_index = self.head;
+            if (bucket_index == no_index) return null;
+            evicted = true;
+            self.remove_index(self.buckets[bucket_index].key);
+            self.unlink(bucket_index);
+            self.live += 1;
+        }
+
+        self.slots[target] = .{
+            .key = key,
+            .bucket = bucket_index,
+            .used = true,
+        };
+        self.append_tail(bucket_index);
+
+        return .{ .index = bucket_index, .matched = false, .evicted = evicted };
+    }
+
+    /// Rebuilds only the lookup index, preserving live LRU order.
+    fn reindex(self: *RateLimitTable) InitError!void {
+        @memset(self.slots, .{});
+        self.tombstones = 0;
+        for (self.buckets, 0..) |bucket, index| {
+            if (bucket.last_refill_ns == 0) continue;
+            const slot = self.find_insert_slot(bucket.key) orelse
+                return error.InvalidIndexCapacity;
+            if (slot.duplicate) return error.DuplicateRateLimitKey;
+            self.slots[slot.index] = .{
+                .key = bucket.key,
+                .bucket = @intCast(index),
+                .used = true,
+            };
+        }
+    }
+
+    const InsertSlot = struct { index: usize, duplicate: bool };
+
+    fn find_insert_slot(self: *RateLimitTable, key: u64) ?InsertSlot {
+        if (self.slots.len == 0) return null;
+        var index = bucket_home(key, self.slots.len);
+        var insert_at: ?usize = null;
+        var probes: usize = 0;
+        while (probes < self.slots.len) : (probes += 1) {
+            self.probe_count += 1;
+            const slot = self.slots[index];
+            if (slot.used) {
+                if (slot.key == key) return .{ .index = index, .duplicate = true };
+            } else if (slot.tombstone) {
+                if (insert_at == null) insert_at = index;
+            } else {
+                return .{ .index = insert_at orelse index, .duplicate = false };
+            }
+            index = if (index + 1 == self.slots.len) 0 else index + 1;
+        }
+        return if (insert_at) |position| .{ .index = position, .duplicate = false } else null;
+    }
+
+    fn touch(self: *RateLimitTable, bucket_index: u32) void {
+        self.unlink(bucket_index);
+        self.append_tail(bucket_index);
+    }
+
+    fn append_tail(self: *RateLimitTable, bucket_index: u32) void {
+        self.sequence +%= 1;
+        if (self.sequence == 0) self.sequence = 1;
+        self.links[bucket_index] = .{
+            .next = no_index,
+            .prev = self.tail,
+            .order = self.sequence,
+        };
+        if (self.tail != no_index) {
+            self.links[self.tail].next = bucket_index;
+        } else {
+            self.head = bucket_index;
+        }
+        self.tail = bucket_index;
+    }
+
+    fn unlink(self: *RateLimitTable, bucket_index: u32) void {
+        const link = self.links[bucket_index];
+        if (link.prev != no_index) {
+            self.links[link.prev].next = link.next;
+        } else {
+            self.head = link.next;
+        }
+        if (link.next != no_index) {
+            self.links[link.next].prev = link.prev;
+        } else {
+            self.tail = link.prev;
+        }
+        self.links[bucket_index] = .{};
+    }
+
+    fn remove_index(self: *RateLimitTable, key: u64) void {
+        var index = bucket_home(key, self.slots.len);
+        var probes: usize = 0;
+        while (probes < self.slots.len) : (probes += 1) {
+            const slot = &self.slots[index];
+            if (!slot.used and !slot.tombstone) return;
+            if (slot.used and slot.key == key) {
+                slot.used = false;
+                slot.tombstone = true;
+                slot.bucket = no_index;
+                self.tombstones += 1;
+                if (self.live != 0) self.live -= 1;
+                return;
+            }
+            index = if (index + 1 == self.slots.len) 0 else index + 1;
+        }
+    }
+};
+
 /// Fixed-state token-bucket rate-limit middleware.
 ///
 /// The caller owns the bucket table and the `std.Io` used to read the
@@ -336,25 +621,32 @@ pub const RateLimit = struct {
     /// sits on its key's linear-probe path. Restored/pre-seeded tables keep
     /// the compatibility scan so their placement is never misread.
     probe_ready: bool = false,
+    /// Optional O(1) index. Null keeps the documented linear compatibility
+    /// path for callers that only pass buckets.
+    table: ?RateLimitTable = null,
 
     pub fn handler(context: *anyopaque, request: *Request, response: *Response) radix.MiddlewareResult {
-        const self: *const RateLimit = @ptrCast(@alignCast(context));
+        const self: *RateLimit = @ptrCast(@alignCast(context));
         if (self.buckets.len == 0) {
             reject_limited(response, retry_after_seconds(self.options.rate_per_second));
             return .stop;
         }
         const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
         const key = rate_limit_key(self.options, request);
-        const slot = locate_bucket(self.buckets, key, self.probe_ready) orelse {
+        const slot = if (self.table) |*table|
+            table.locate(key)
+        else
+            locate_bucket(self.buckets, key, self.probe_ready);
+        const found = slot orelse {
             reject_limited(response, retry_after_seconds(self.options.rate_per_second));
             return .stop;
         };
-        const bucket = &self.buckets[slot.index];
-        if (!slot.matched) {
+        const bucket = &self.buckets[found.index];
+        if (!found.matched) {
             // An evicted slot starts empty: a client that rotates an
             // attacker-controlled key must not reset its own budget. A free
             // slot starts full so a new peer is not punished for table churn.
-            const seeded = if (slot.evicted) 0 else effective_burst(self.options.rate_per_second, self.options.burst);
+            const seeded = if (found.evicted) 0 else effective_burst(self.options.rate_per_second, self.options.burst);
             bucket.* = .{
                 .key = key,
                 .tokens = @intCast(seeded),
@@ -396,6 +688,28 @@ pub fn rate_limit(io: std.Io, options: RateLimitOptions, buckets: []RateLimitBuc
         .buckets = buckets,
         .io = io,
         .probe_ready = probe_ready,
+    };
+}
+
+/// Builds a rate limiter with caller-owned O(1) index and LRU storage.
+///
+/// `slots.len` must be at least twice `buckets.len` and `links.len` must equal
+/// `buckets.len`. Construction rebuilds the index from the buckets, so a
+/// restored table keeps its placement and exact-oldest tie break.
+pub fn rate_limit_indexed(
+    io: std.Io,
+    options: RateLimitOptions,
+    buckets: []RateLimitBucket,
+    slots: []RateLimitIndexSlot,
+    links: []RateLimitLink,
+) RateLimitTable.InitError!RateLimit {
+    const table = try RateLimitTable.init(buckets, slots, links);
+    return .{
+        .options = options,
+        .buckets = buckets,
+        .io = io,
+        .probe_ready = false,
+        .table = table,
     };
 }
 

@@ -34,11 +34,10 @@ dependency migrations, and decisions.
 - `build.zig`, `build.zig.zon`, and the generated views
   `build.zig.zon.json`, `build.zig.zon.nix`, `build.zig.zon.txt`
   (`scripts/update_zon_files.sh` bridges to zon2nix).
-- libxev provenance: fork `main` as a read-only mirror; `uwz/zig-0.16` is
-  created by the migration and is append-only from first push. After
-  migration, pin full 40-hex commits and record `uwz(<area>): ...` ledger
-  commits. The interim `patches/` plus `vendor/libxev_overlay/` state remains
-  authoritative until then.
+- libxev provenance: fork `main` is a read-only mirror; `uwz/zig-0.16` is
+  append-only from first push and carries XEV-001 and XEV-002. Pin full 40-hex commits and
+  record `uwz(<area>): ...` ledger commits. The manifest pins `cbf01bc`; no
+  local overlay or libxev audit patch remains.
 - `builds/orchestrator.zig`: target routing (native POSIX/Windows, wasm32,
   `all-targets`), `UWEBZOCKETS_DEFAULT_TARGET`, unsupported-target panic.
 - `builds/vendor/root.zig` plus `builds/vendor/boringssl.zig`,
@@ -126,14 +125,13 @@ dependency migrations, and decisions.
     hand-edited.
 12. libxev fork policy: keep upstream `mitchellh/libxev` fetch-only and never
     push, comment, or contribute there. Keep fork `main` an exact mirror and
-    `uwz/zig-0.16` append-only from first push; the integration branch is
-    created by the migration. Require `main` to block deletion and
+    `uwz/zig-0.16` append-only from first push; the integration branch exists
+    at `cbf01bc` with XEV-001. Require `main` to block deletion and
     non-fast-forward updates except the recorded mirror-repair bypass, and
     require `uwz/zig-0.16` review, force-push blocking, and deletion blocking.
     Confirm protection is active. Record every patch in the ledger with ID,
     upstream reference, invariant, test evidence, and retirement criterion.
-    Until migration, the manifest still pins upstream `9ce8e8e` and the ADR
-    0004 overlay remains authoritative.
+    The manifest pins the full fork commit; the ADR 0004 overlay is removed.
 
 # Working Agreement
 
@@ -154,8 +152,8 @@ dependency migrations, and decisions.
   network/TLS, and memory changes. After migration, pin only a full 40-hex
   fork commit and push tested integration results through the sync branch PR;
   never leave them unpushed.
-- Keep the current upstream `9ce8e8e` pin and the ADR 0004 overlay until the
-  migration; never claim `build.zig.zon` already uses the fork.
+- Keep the full fork commit pin and the XEV-001 ledger entry current. Never
+  claim the upstream pin or the ADR 0004 overlay is active.
 - Apply `ci-cd-and-automation`: workflows stay deterministic and pinned, cache
   keys include the per-mode suffix plus build-graph and overlay hashes, and no
   gate is weakened to make a change pass.

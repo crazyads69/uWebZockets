@@ -103,7 +103,9 @@ fields they need:
 - **Connection pool** (`src/core/pool.zig`): one contiguous `TcpConnection`
   slab plus a freelist index stack and a `StaticBitSet` activity bitmap. Acquire
   and release are O(1) and range-checked; `from_slices` adopts caller-carved
-  storage without owning it.
+  storage without owning it. Each slot embeds one idle `TimerNode` and nine
+  parking slots (HTTP/1 plus one per HTTP/2 stream) so deadlines never
+  allocate.
 - **Router** (`src/router/radix.zig`): parallel arrays for node segments,
   child/sibling/parent links, route bits, method handlers, and WebSocket
   behaviors. An open-addressed FNV-1a index resolves exact static routes before

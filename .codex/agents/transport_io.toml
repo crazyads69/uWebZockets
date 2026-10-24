@@ -34,10 +34,11 @@ instrumentation, adversarial review, and proof.
   acquire/release, range and alignment validation in `release`, `index_of`.
 - `src/core/context.zig`: inline zero-allocation `bitset_pool` (O(capacity)
   acquire; not for high-churn paths).
-- `src/core/timer.zig`: `TimerContext` and `connection_sweeper(PoolType, ms)`;
-  the sweeper contract (contiguous `storage`, `is_active`, `closing`,
-  `last_active_ms`, `ws.heartbeat_tick`) is comptime-enforced. Re-arm a fresh
-  relative `timer.run`; never reuse a fired completion (io_uring workaround).
+- `src/core/timer.zig`: `TimerContext` and the per-worker `Scheduler`; the
+  scheduler drives `src/core/timer_wheel.zig` with one persistent libxev
+  timer. Connection-owned nodes live in `TcpConnection`; never allocate a
+  timer node on a request path. Use a dedicated completion for a stop cancel
+  and never reuse a fired or reset completion for another operation.
 - `src/core/tcp.zig`: `TcpConnection` state machine, `TcpServer`, read/write
   completions, write ring (`copy_parts_to_ring`, `advance_write_head`), TLS
   driving (`process_tls_data`, `drain_tls_plaintext`), HTTP/1, HTTP/2 embed,
@@ -82,7 +83,7 @@ instrumentation, adversarial review, and proof.
 7. Never move, copy, or reallocate a started transport, engine, `TcpServer`,
    or `App`. `udp.zig` requires a stable `self` at `start`, and libxev
    callbacks retain `App`'s address after `listen`/`listen_udp`.
-8. Preserve shutdown ordering: stop the sweeper, close the listener, shut down
+8. Preserve shutdown ordering: stop the timing-wheel scheduler, close the listener, shut down
    the UDP/QUIC transport, cancel every connection, run the loop until every
    completion is disarmed, then free TLS state, QUIC state, the loop, and the
    contiguous slabs. `deinit` must assert drained state, not guess.

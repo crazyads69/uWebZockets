@@ -233,11 +233,19 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return .{ .io = self.io };
         }
 
-        /// Overrides the inactivity timeout; zero disables the sweeper.
+        /// Overrides the drained keep-alive timeout; zero disables it.
         pub fn with_idle_timeout_ms(
             self: Self,
             comptime value: u64,
         ) configured_builder(config.with(.{ .idle_timeout_ms = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the incomplete-request head/body timeout; zero disables it.
+        pub fn with_header_read_timeout_ms(
+            self: Self,
+            comptime value: u64,
+        ) configured_builder(config.with(.{ .header_read_timeout_ms = value })) {
             return .{ .io = self.io };
         }
 

@@ -607,6 +607,43 @@ test "router: request_shutdown wakes a foreign-thread run" {
     try std.testing.expect(!server.is_running());
 }
 
+test "router: timing wheel reaps a silent connection" {
+    const TestApp = app.configured_app_with_timeout(4, 1024, 4096, 20);
+    const idle_config = comptime config_module.default_config.with(.{
+        .max_connections = 4,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 20,
+        .header_read_timeout_ms = 20,
+        .enable_dev_log = false,
+    });
+    var server = try TestApp.init_configured(std.testing.io, std.testing.allocator, idle_config);
+    defer server.deinit();
+
+    _ = try server.get("/", dummy_handler);
+    try server.listen("127.0.0.1", 0);
+    const port = try support.tcp.listener_port(&server.listeners[0]);
+    var address = try std.Io.net.IpAddress.parse("127.0.0.1", port);
+    var client = try address.connect(std.testing.io, .{ .mode = .stream });
+    defer client.close(std.testing.io);
+
+    const accept_deadline = std.Io.Clock.now(.awake, std.testing.io).nanoseconds + 5 * std.time.ns_per_s;
+    while (server.pool.count_active() == 0 and
+        std.Io.Clock.now(.awake, std.testing.io).nanoseconds < accept_deadline)
+    {
+        try server.loop.xev_loop.run(.once);
+    }
+    try std.testing.expectEqual(@as(usize, 1), server.pool.count_active());
+
+    const reap_deadline = std.Io.Clock.now(.awake, std.testing.io).nanoseconds + 5 * std.time.ns_per_s;
+    while (server.pool.count_active() != 0 and
+        std.Io.Clock.now(.awake, std.testing.io).nanoseconds < reap_deadline)
+    {
+        try server.loop.xev_loop.run(.once);
+    }
+    try std.testing.expectEqual(@as(usize, 0), server.pool.count_active());
+}
+
 test "router: failed metrics install leaves no listener resources" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
 
@@ -635,7 +672,7 @@ test "router: failed metrics install leaves no listener resources" {
     // The failed install must not strand the listener or sweeper timer.
     try std.testing.expectEqual(before, after);
     try std.testing.expect(server.listener_count == 0);
-    try std.testing.expect(server.sweeper == null);
+    try std.testing.expect(server.scheduler == null);
     try std.testing.expect(!server.routes_locked);
 }
 

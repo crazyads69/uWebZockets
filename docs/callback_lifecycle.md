@@ -90,7 +90,7 @@ on kqueue and IOCP instead of calling the backend directly.
 
 ## TCP close and pool release
 
-- `close_connection` (`src/core/tcp.zig:1308`) is idempotent teardown. It
+- `close_connection` (`src/core/tcp.zig`) is idempotent teardown. It
   aborts the connection signal (`src/core/tcp.zig:1311`), cancels async
   tokens (`src/core/tcp.zig:1317`), releases file and TLS state
   (`src/core/tcp.zig:1321`, `src/core/tcp.zig:1322`), cancels read and write
@@ -102,7 +102,7 @@ on kqueue and IOCP instead of calling the backend directly.
 - `on_read_cancel_complete` (`src/core/tcp.zig:1403`) and
   `on_write_cancel_complete` (`src/core/tcp.zig:1418`) clear their cancel
   flags and re-run the release gate. Driven by the cancellation completions.
-- `release_closed_connection` (`src/core/tcp.zig:1434`) is the only path back
+- `release_closed_connection` (`src/core/tcp.zig`) is the only path back
   to the freelist. Once close, read, write, and cancel flags are clear it
   invokes `on_close_cb` (`src/core/tcp.zig:1456`), the pool release closure
   installed at `src/router/app.zig:867`.
@@ -111,23 +111,29 @@ on kqueue and IOCP instead of calling the backend directly.
 
 ## Timers
 
-- `connection_sweeper` (`src/core/timer.zig:115`) is the periodic idle and
-  WebSocket heartbeat sweep. `start` (`src/core/timer.zig:147`) registers
-  `on_tick` (`src/core/timer.zig:179`) at `src/core/timer.zig:151`; the tick
-  advances `WebSocket.heartbeat_tick` (`src/core/timer.zig:202`), closes idle
-  connections through `tcp.close_connection` (`src/core/timer.zig:210`), and
-  re-arms a fresh relative timeout (`src/core/timer.zig:217`). `stop`
-  (`src/core/timer.zig:162`) cancels into `on_cancel`
-  (`src/core/timer.zig:222`). Started by `App.listen`
-  (`src/router/app.zig:902`) and `App.listen_reuse_port`
-  (`src/router/app.zig:1127`); stopped by `App.begin_shutdown`
-  (`src/router/app.zig:407`).
-- `TimerContext` (`src/core/timer.zig:12`) is the generic repeating timer; its
-  callback type is `TickCallback` (`src/core/timer.zig:9`).
-  `start_timer` (`src/core/timer.zig:38`) registers `on_timer_tick`
-  (`src/core/timer.zig:69`) and `stop_timer` (`src/core/timer.zig:52`)
-  cancels into `on_timer_cancel` (`src/core/timer.zig:96`). No production path
-  uses it yet; tests exercise it from `src/tests/core_tests.zig`.
+- `timer_wheel.Wheel` (`src/core/timer_wheel.zig`) owns intrusive `TimerNode`
+  entries. Nodes live inside the connection slab (`TcpConnection.idle_timer`
+  and `TcpConnection.sleep_slots`), so scheduling, cancellation, and expiry
+  never allocate. Four levels cover 0 to 18.64 hours; longer deadlines wait in
+  an overflow list and enter the wheel when they are within range.
+- `timer.Scheduler` (`src/core/timer.zig`) owns one persistent libxev timer
+  per worker loop. It wakes on a bounded five-millisecond tick while deadlines
+  exist, advances the wheel, and cascades nodes. The completion is never reset
+  or reused. `stop` does not cancel; the bounded tick wakes once more and
+  disarms after observing the stop flag. This avoids IOCP's queued-callback
+  race at the cost of a 5 ms tick when timers exist.
+- `TcpConnection.touch_activity` arms the keep-alive deadline, or the
+  incomplete-header deadline while a request head or body is partial. A
+  connection with parked delayed responses suppresses the idle deadline.
+  `on_idle_timeout` closes through `tcp.close_connection`; `cancel_timers`
+  removes every connection-owned node before the slot returns to the pool.
+- `AsyncResponse.sleep` and `AsyncResponse.sleep_complete` park an HTTP/1
+  request in slot 0 or an HTTP/2 stream in its per-stream slot. Expiry invokes
+  the application resume callback or completes the stored response, then
+  re-arms the idle deadline. `close_http2_stream` cancels the stream's slot so
+  a reset peer cannot run a stale callback.
+- `TimerContext` remains the generic repeating timer for callers that need a
+  simple interval; it is not used by the connection deadline path.
 - Cross-worker wakeup: `App.arm_cluster_wakeup` (`src/router/app.zig:1136`)
   submits `xev.Async.wait` (`src/router/app.zig:1140`) with
   `on_cluster_wakeup` (`src/router/app.zig:1159`), which drains the cluster
@@ -221,8 +227,8 @@ on kqueue and IOCP instead of calling the backend directly.
   (`src/router/app.zig:939`) and enters `core_loop.run`
   (`src/router/app.zig:940`), which drives libxev `.until_done`
   (`src/core/loop.zig:83`).
-- Shutdown request: `App.begin_shutdown` (`src/router/app.zig:400`) stops the
-  sweeper (`src/router/app.zig:407`), closes the listener
+- Shutdown request: `App.begin_shutdown` stops the timing-wheel scheduler,
+  closes the listener
   (`src/router/app.zig:408`), shuts the QUIC transport down
   (`src/router/app.zig:409`), and calls `close_connection` for every active
   pool slot (`src/router/app.zig:413`).
@@ -268,12 +274,12 @@ on kqueue and IOCP instead of calling the backend directly.
                         |
                         | flush / pump_file_body / start_write
                         v
-  close_after_flush (tcp.zig:1293) or close_connection (tcp.zig:1308)
+  close_after_flush or close_connection
                         |
                         | cancel read/write -> socket.close -> cancel and
                         | close callbacks
                         v
-  release_closed_connection (tcp.zig:1434) -> on_close_cb -> pool.release
+  release_closed_connection -> on_close_cb -> pool.release
 ```
 
 ## Outside the native loop

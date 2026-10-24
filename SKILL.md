@@ -23,8 +23,8 @@ fits the current step and never stack processes that do not apply.
 - **Zero-Allocation Hot Paths**: The request/response cycle must not allocate memory dynamically. Allocate contiguous fixed-capacity connection, message, and output storage during application startup and reuse it for every callback.
 - **Event Loop & IO**: Track `farbenbuilds/libxev` as the maintained
   downstream fork; upstream `mitchellh/libxev` is read-only, and fork pins use
-  full 40-hex commits. The current upstream pin and the ADR 0004 overlay
-  remain until the next libxev dependency update
+  full 40-hex commits. The manifest pins commit `cbf01bc` on `uwz/zig-0.16`
+  with XEV-001 and XEV-002; the ADR 0004 overlay is removed
   ([policy](docs/libxev_fork.md)).
 - **Parsing**: Leverage the pinned `farbenbuilds/zslay` 0.2.1 frame state
   machine and keep µWebZockets' handshake, message, and UTF-8 limits explicit.

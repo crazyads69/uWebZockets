@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "2.0.6",
+    .version = "2.1.0",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -10,10 +10,12 @@
             .hash = "zslay-0.2.1-OB-IfBl0AQCHCIVUH0AbAjErcCG_LNkaLp8Gz1BUXnoy",
         },
 
-        // mitchellh/libxev
+        // farbenbuilds/libxev — downstream integration branch uwz/zig-0.16.
+        // Base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf plus XEV-001 and
+        // XEV-002.
         .libxev = .{
-            .url = "git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf",
-            .hash = "libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F",
+            .url = "git+https://github.com/farbenbuilds/libxev#cbf01bc432a84cd91a99c1cb1031b46416d044c7",
+            .hash = "libxev-0.0.0-86vtc3UWFAAm0IbNGZfqxwInlllaQ6S15g3OOHW2IvqS",
         },
 
         // google/boringssl — Google LLC
@@ -78,7 +80,6 @@
         "patches",
         "scripts/check_static_archive.sh",
         "vendor/lsquic_overlay",
-        "vendor/libxev_overlay",
         "flake.nix",
         "flake.lock",
     },

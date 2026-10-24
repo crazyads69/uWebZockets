@@ -3,6 +3,7 @@ const core_loop = @import("../core/loop.zig");
 const core_tcp = @import("../core/tcp.zig");
 const core_pool = @import("../core/pool.zig");
 const core_timer = @import("../core/timer.zig");
+const timer_wheel = @import("../core/timer_wheel.zig");
 const core_affinity = @import("../core/affinity.zig");
 const core_signal = @import("../core/signal.zig");
 const radix = @import("radix.zig");
@@ -38,8 +39,10 @@ const log = std.log.scoped(.server);
 pub const default_max_ws_message_size = 16 * 1024;
 /// Default bounded pending-output capacity per TCP connection.
 pub const default_write_queue_size = core_tcp.default_write_queue_capacity;
-/// Default inactivity timeout before an idle connection is closed.
+/// Default inactivity timeout before an idle keep-alive connection is closed.
 pub const default_idle_timeout_ms: u64 = 120_000;
+/// Default time a connection may hold an incomplete request head or body.
+pub const default_header_read_timeout_ms: u64 = 30_000;
 /// Maximum simultaneously bound TCP listeners on one application.
 pub const max_tcp_listeners = 4;
 
@@ -160,6 +163,7 @@ pub fn configured_app_with_route_params(
             .max_ws_message_size = max_ws_message_size,
             .write_queue_size = write_queue_size,
             .idle_timeout_ms = idle_timeout_ms,
+            .header_read_timeout_ms = default_header_read_timeout_ms,
         };
 
         io: std.Io,
@@ -237,7 +241,9 @@ pub fn configured_app_with_route_params(
         listeners: [max_tcp_listeners]core_tcp.TcpServer = undefined,
         bindings: [max_tcp_listeners]ListenerBinding = undefined,
         listener_count: usize = 0,
-        sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
+        scheduler: ?core_timer.Scheduler = null,
+        heartbeat_timer: timer_wheel.TimerNode = .{},
+        header_timeout_ms: u64 = default_header_read_timeout_ms,
         watcher: ?file_watch_module.Watcher = null,
         signal_watcher: ?core_signal.SignalWatcher = null,
         tls_ctx: ?TlsContext = null,
@@ -367,6 +373,7 @@ pub fn configured_app_with_route_params(
                 .h2_session_stride = layout.h2_session_stride,
                 .h2_capacities = config.h2_capacities(),
                 .max_body_size = config.max_body_size,
+                .header_timeout_ms = config.header_read_timeout_ms,
                 .reject_policy = config.rejection_policy(),
                 .ws_message_storage = layout.ws_messages,
                 .ws_compression_storage = layout.compression_scratch,
@@ -519,10 +526,10 @@ pub fn configured_app_with_route_params(
                 std.debug.panic("application shutdown failed: {}", .{err});
             };
 
-            if (self.sweeper) |*sw| {
-                sw.deinit();
+            if (self.scheduler) |*scheduler| {
+                scheduler.deinit();
             }
-            self.sweeper = null;
+            self.scheduler = null;
             if (self.watcher) |*watch| watch.deinit();
             self.watcher = null;
             if (self.signal_watcher) |*watcher| watcher.deinit();
@@ -608,7 +615,7 @@ pub fn configured_app_with_route_params(
             self.cluster_stop_requested.store(true, .release);
             // Shutdown continues even if the cross-thread wakeup is already closed.
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
-            if (self.sweeper) |*sw| sw.stop(&self.loop);
+            if (self.scheduler) |*scheduler| scheduler.stop(&self.loop);
             if (self.watcher) |*watch| watch.stop(self.loop.get_xev_loop());
             if (self.signal_watcher) |*watcher| watcher.stop();
             for (self.listeners[0..self.listener_count]) |*server| {
@@ -1067,6 +1074,21 @@ pub fn configured_app_with_route_params(
         }
 
         // callback triggered when the tcp server accepts a new socket.
+        fn on_heartbeat_tick(ctx: *anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            if (self.shutting_down) return;
+            const now = std.Io.Clock.now(.awake, self.io);
+            const now_ms: i64 = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
+            for (self.pool.storage, 0..) |*conn, index| {
+                if (!self.pool.is_active(index) or conn.closing) continue;
+                conn.ws.heartbeat_tick(now_ms);
+            }
+            if (self.shutting_down) return;
+            if (self.scheduler) |*scheduler| {
+                scheduler.schedule_after(&self.heartbeat_timer, 5000, on_heartbeat_tick, self);
+            }
+        }
+
         fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
             const binding: *const ListenerBinding = @ptrCast(@alignCast(user_data.?));
             const self = binding.app;
@@ -1173,6 +1195,13 @@ pub fn configured_app_with_route_params(
             conn.pool_ptr = &self.pool;
             conn.io = self.io;
             conn.metrics = self.metrics_registry;
+            if (self.scheduler) |*scheduler| {
+                conn.attach_timer_scheduler(
+                    scheduler,
+                    idle_timeout_ms,
+                    self.header_timeout_ms,
+                );
+            }
             if (self.metrics_registry) |registry| registry.add(.connections_accepted, 1);
             if (self.dev_log_enabled) {
                 const sink = dev_log_module.thread_sink();
@@ -1286,23 +1315,25 @@ pub fn configured_app_with_route_params(
                 _ = try core_tcp.listener_port(server);
             }
 
-            var sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null;
-            if (idle_timeout_ms != 0 or self.router.has_ws_heartbeats()) {
-                sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
-            }
+            // The wheel also backs `AsyncResponse.sleep`, so it exists even
+            // when both idle deadlines are disabled.
+            var scheduler: ?core_timer.Scheduler = try core_timer.Scheduler.init(self.io);
             errdefer {
-                if (sweeper) |*sw| sw.deinit();
+                if (scheduler) |*engine| engine.deinit();
             }
 
             // Phase 3: publish state, then arm accepts for the whole set.
             self.listener_count = bound;
             self.routes_locked = true;
-            self.sweeper = sweeper;
+            self.scheduler = scheduler;
             for (self.listeners[0..bound]) |*server| {
                 core_tcp.accept_start(server, &self.loop);
             }
-            if (self.sweeper) |*sw| {
-                sw.start(&self.loop);
+            if (self.scheduler) |*engine| {
+                engine.start(&self.loop);
+                if (self.router.has_ws_heartbeats()) {
+                    engine.schedule_after(&self.heartbeat_timer, 5000, on_heartbeat_tick, self);
+                }
             }
 
             for (endpoints) |endpoint| {

@@ -139,7 +139,7 @@ reconstructing it from reflection, anonymous structure, or nesting.
 - Partial-update records are explicit named structs with optional fields
   (`ServerConfig.Overrides`), not `anytype` plus `@typeInfo`.
 - Comptime specialization is limited to capacity and platform parameters
-  (`freelist_pool`, `connection_sweeper`, `configured_service`). Do not build
+  (`freelist_pool`, `Scheduler`, `configured_service`). Do not build
   types through reflection when a named type can state the contract.
 - Aliases are zero-cost. Never add a wrapper, vtable, or runtime indirection
   for readability alone.

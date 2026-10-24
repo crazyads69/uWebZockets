@@ -70,18 +70,19 @@ claim.
 | UDP receive GRO | The libxev UDP read completion uses `msghdr.control = null`, so `UDP_GRO` segment boundaries are unavailable. Enabling it would make lsquic parse a coalesced buffer as one datagram. Restore when the loop exposes ancillary data or the transport moves to a raw `recvmsg` path |
 | Cross-process listener barrier | `listen_all` is in-process all-or-nothing. A cross-process socket takeover needs a shared-memory protocol and belongs to the v2.9.0 drain/takeover milestone |
 
-## Carried into 2.1.0
+## Carried into 2.2.0
 
-- Quiet-host evidence for the v2.0.0 pipeline, WebSocket, `json-comp`, and
-  `latency-1m` targets, archived under the v1.9.0 evidence contract.
+- Quiet-host evidence for the v2.0.0 and v2.1.0 pipeline, WebSocket,
+  `json-comp`, and `latency-1m` targets, archived under the v1.9.0 evidence
+  contract.
 - Receive-side `UDP_GRO` after the loop exposes ancillary segment sizes.
-- libxev IOCP `AcceptEx` patch migration to the `farbenbuilds/libxev`
-  `uwz/zig-0.16` integration branch and overlay removal in the next libxev
-  dependency update ([ADR 0005](adr/0005-libxev-fork.md),
-  [policy](libxev_fork.md)).
+- HttpArena `async` adapter activation for the shipped `/delay/:ms` surface.
 - Cross-process `SO_REUSEPORT` / systemd socket-activation handoff.
 - Decisions on per-listener certificates, a bounded TRACE reflection example,
   and an optional `uwz_app_listen_all` C entry point.
+- A retained fork archive and second-machine resolution for the pinned libxev
+  commit, plus the native Windows runtime gate
+  ([ADR 0005](adr/0005-libxev-fork.md), [policy](libxev_fork.md)).
 
 ## Deliberate boundaries
 
@@ -135,18 +136,18 @@ defects, in order of encounter.
    completions (submit them before canceling, or track submission explicitly)
    and clear the flags for completions whose callback will never fire.
 
-The 1.9.0 work carries the upstream accept fix as an auditable overlay rather
-than a package-cache edit, and it submits queued IOCP completions before
+The 1.9.0 work carried the upstream accept fix as a pre-generated overlay
+rather than a package-cache edit; the 2.1.0 migration replaced it with the fork
+commit. It also submits queued IOCP completions before
 canceling them so the target callback clears `read_active`/`is_writing`.
 `windows.yml` now runs the full test suite on `windows-2025` in addition to the
 compile gates, and a regression test closes a queued write before submission
 and asserts that the pool slot returns. The decision, patch, and rollback path
 are recorded in [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md).
-[ADR 0005](adr/0005-libxev-fork.md) now selects `farbenbuilds/libxev` as the
-maintained fork, so overlay retirement follows the `uwz/zig-0.16` integration
-branch at the next libxev dependency update rather than an upstream release;
-[libxev_fork.md](libxev_fork.md) is the policy. The overlay and patch remain
-authoritative until that migration lands. The TLS cluster test plumbing already
+[ADR 0005](adr/0005-libxev-fork.md) selects `farbenbuilds/libxev` as the
+maintained fork. The 2.1.0 release pins commit `cbf01bc` on `uwz/zig-0.16`,
+carries XEV-001 in the fork, and removes the overlay and audit patch;
+[libxev_fork.md](libxev_fork.md) is the policy. The TLS cluster test plumbing already
 binds `getsockname` and `SO_RCVTIMEO` through ws2_32, so those tests execute
 rather than skip. Windows remains compile-only in the support claim until the
 native job is green for the release commit.

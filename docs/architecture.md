@@ -174,10 +174,10 @@ it `.until_done`. All completions are inline members of their owning connection,
 server, transport, or engine; none is heap-allocated, and none outlives the
 storage it borrows. Only `loop.zig` inspects the libxev backend; every other
 module cancels through the backend-aware shim. libxev provenance follows
-[libxev_fork.md](libxev_fork.md): the maintained downstream fork becomes the
-source of truth when the next dependency update migrates the pin, while the
-[ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md) overlay remains
-authoritative until then.
+[libxev_fork.md](libxev_fork.md): the manifest pins fork commit `cbf01bc` on
+`uwz/zig-0.16`, with XEV-001 and XEV-002 as the downstream patches. The
+[ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md) overlay is
+historical and removed.
 
 `src/core/xev.zig` re-exports libxev's runtime-selectable API and registers it
 as the package's `xev` import. On Linux the loop probes io_uring first and
@@ -269,6 +269,15 @@ and tail latency hold up on lossy paths.
 - `src/quic/datagram_ring.zig` and `src/router/datagram.zig` route WebTransport
   datagrams by session path into per-connection SoA rings carved from the
   startup slab.
+- `src/core/timer_wheel.zig` is the per-worker deadline engine: four levels
+  (256 x 1 ms, 64 x 256 ms, 64 x 16.4 s, 64 x 17.5 min) with intrusive nodes
+  embedded in pooled connections. `src/core/timer.zig` drives it with one
+  persistent libxev timer that wakes on a bounded five-millisecond tick while
+  deadlines exist. Keep-alive, incomplete-header, and deferred response
+  deadlines share that timer; there is no periodic pool sweep. The 5 ms tick
+  is the safe cross-backend choice on IOCP, where resetting or canceling and
+  reusing the same timer completion races queued callbacks. Shutdown lets the
+  final tick disarm instead of canceling.
 
 ### Client
 
@@ -285,8 +294,8 @@ memory-BIO pattern as the server. See [client.md](client.md).
 Shutdown reverses the ownership graph deterministically:
 
 1. Reject new work and mark the application unavailable.
-2. Stop recurring timers and the signal watcher, close the listener, and shut
-   down the UDP/QUIC transport.
+2. Stop the per-worker timing wheel and the signal watcher, close the
+   listener, and shut down the UDP/QUIC transport.
 3. Cancel every connection completion and run the loop until all completions
    are disarmed.
 4. Verify drained state: no active pool slots, a completed listener close, and

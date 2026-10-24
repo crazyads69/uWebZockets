@@ -5,7 +5,7 @@
 | Component | Version or revision | License |
 | --- | --- | --- |
 | zslay | 0.2.1 | MIT |
-| libxev | 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf | MIT |
+| libxev | cbf01bc432a84cd91a99c1cb1031b46416d044c7 (farbenbuilds fork, base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf) | MIT |
 | BoringSSL | 0.20261020.0 (d3bf4795ad5b79d646cddf2fec687da5b9b502db) | ISC-style and component licenses |
 | Fiat Crypto (via BoringSSL) | BoringSSL revision above | Apache-2.0 |
 | lsquic | 4.10.2 | MIT and bundled component licenses |
@@ -30,15 +30,13 @@ the audit patch, and the build no longer runs `patch` or Perl. The h1spec CI job
 applies `patches/h1spec_deno_cleanup.patch` only to close and unreference
 completed test connections. The upstream sources remain unchanged.
 
-`vendor/libxev_overlay/src/backend/iocp.zig` applies
-`patches/libxev_iocp_accept_socket.patch` to the pinned libxev revision. The
-overlay clears the IOCP accept socket after `AcceptEx` transfers it to the
-completion, on both success and error paths, so a persistent accept loop cannot
-reuse the connected socket. `scripts/check_vendor_overlay.sh` regenerates the
-overlay from the pinned source and audit patch; the Zig package cache and the
-upstream sources remain unchanged. The patch is carried until the next libxev
-dependency update migrates the pin to the fork integration branch in
-[ADR 0005](docs/adr/0005-libxev-fork.md); the overlay remains authoritative
-until then, after which the fork commit is the source of truth and the overlay
-and patch are deleted, with the procedure in
+`build.zig.zon` pins the maintained downstream fork
+<https://github.com/farbenbuilds/libxev> at the full commit
+`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`. The branch is
+based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries two
+ledgered commits, XEV-001 and XEV-002, which clear the IOCP accept socket after `AcceptEx`
+transfers it to the completion on both success and error paths. No local
+overlay or `patches/libxev_iocp_accept_socket.patch` remains.
+`scripts/check_libxev_fork.sh` verifies the full commit, all four dependency
+views, and remote reachability. See [ADR 0005](docs/adr/0005-libxev-fork.md) and
 [docs/libxev_fork.md](docs/libxev_fork.md).

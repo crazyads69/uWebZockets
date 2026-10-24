@@ -520,6 +520,140 @@ test "rate limit: an empty bucket table fails closed" {
     try std.testing.expect(std.mem.indexOf(u8, capture.header_bytes(), "Retry-After: 1\r\n") != null);
 }
 
+test "rate limit: indexed table evicts exact oldest with lowest-index tie break" {
+    var buckets = [_]middleware.RateLimitBucket{
+        .{ .key = 10, .tokens = 1, .last_refill_ns = 100 },
+        .{ .key = 20, .tokens = 1, .last_refill_ns = 200 },
+        .{ .key = 30, .tokens = 1, .last_refill_ns = 100 },
+        .{ .key = 40, .tokens = 1, .last_refill_ns = 300 },
+    };
+    var slots: [8]middleware.RateLimitIndexSlot = [_]middleware.RateLimitIndexSlot{middleware.RateLimitIndexSlot{}} ** 8;
+    var links: [4]middleware.RateLimitLink = [_]middleware.RateLimitLink{middleware.RateLimitLink{}} ** 4;
+    var table = try middleware.RateLimitTable.init(&buckets, &slots, &links);
+
+    const victim = table.locate(99).?;
+    try std.testing.expect(victim.evicted);
+    try std.testing.expectEqual(@as(usize, 0), victim.index);
+    buckets[0] = .{ .key = 99, .tokens = 0, .last_refill_ns = 1_000 };
+
+    // The next miss must take the remaining timestamp-100 bucket (index 2),
+    // not the later timestamp-200 bucket (index 1).
+    const second = table.locate(98).?;
+    try std.testing.expect(second.evicted);
+    try std.testing.expectEqual(@as(usize, 2), second.index);
+}
+
+test "rate limit: indexed table keeps 4096 keys bounded and O(1) expected" {
+    var buckets = [_]middleware.RateLimitBucket{.{}} ** 4096;
+    var slots: [8192]middleware.RateLimitIndexSlot = [_]middleware.RateLimitIndexSlot{middleware.RateLimitIndexSlot{}} ** 8192;
+    var links: [4096]middleware.RateLimitLink = [_]middleware.RateLimitLink{middleware.RateLimitLink{}} ** 4096;
+    var table = try middleware.RateLimitTable.init(&buckets, &slots, &links);
+
+    for (1..4097) |key| {
+        const slot = table.locate(key).?;
+        try std.testing.expect(!slot.matched);
+        buckets[slot.index] = .{
+            .key = @intCast(key),
+            .tokens = 1,
+            .last_refill_ns = @intCast(key),
+        };
+    }
+    try std.testing.expectEqual(@as(usize, 4096), table.live);
+
+    table.probe_count = 0;
+    for (1..4097) |key| {
+        const slot = table.locate(key).?;
+        try std.testing.expect(slot.matched);
+        try std.testing.expectEqual(@as(u64, @intCast(key)), buckets[slot.index].key);
+    }
+    try std.testing.expect(table.probe_count <= 4096 * 64);
+
+    // Every live key is unique.
+    for (buckets, 0..) |bucket, index| {
+        if (bucket.last_refill_ns == 0) continue;
+        for (buckets[index + 1 ..]) |other| {
+            if (other.last_refill_ns == 0) continue;
+            try std.testing.expect(bucket.key != other.key);
+        }
+    }
+}
+
+test "rate limit: indexed eviction starts the new key empty" {
+    var buckets = [_]middleware.RateLimitBucket{
+        .{ .key = 1, .tokens = 3, .last_refill_ns = 100 },
+        .{ .key = 2, .tokens = 3, .last_refill_ns = 200 },
+    };
+    var slots: [4]middleware.RateLimitIndexSlot = [_]middleware.RateLimitIndexSlot{middleware.RateLimitIndexSlot{}} ** 4;
+    var links: [2]middleware.RateLimitLink = [_]middleware.RateLimitLink{middleware.RateLimitLink{}} ** 2;
+    var table = try middleware.RateLimitTable.init(&buckets, &slots, &links);
+
+    const victim = table.locate(3).?;
+    try std.testing.expect(victim.evicted);
+    try std.testing.expectEqual(@as(usize, 0), victim.index);
+    buckets[victim.index] = .{ .key = 3, .tokens = 0, .last_refill_ns = 300 };
+    const again = table.locate(3).?;
+    try std.testing.expect(again.matched);
+    try std.testing.expectEqual(@as(u32, 0), buckets[again.index].tokens);
+}
+
+test "rate limit: empty indexed table fails closed without probing" {
+    var buckets: [0]middleware.RateLimitBucket = .{};
+    var slots: [0]middleware.RateLimitIndexSlot = .{};
+    var links: [0]middleware.RateLimitLink = .{};
+    var table = try middleware.RateLimitTable.init(&buckets, &slots, &links);
+    try std.testing.expect(table.locate(1) == null);
+}
+
+test "rate limit: indexed constructor rejects duplicate or undersized storage" {
+    var duplicate = [_]middleware.RateLimitBucket{
+        .{ .key = 1, .tokens = 1, .last_refill_ns = 100 },
+        .{ .key = 1, .tokens = 1, .last_refill_ns = 200 },
+    };
+    var slots: [4]middleware.RateLimitIndexSlot = [_]middleware.RateLimitIndexSlot{middleware.RateLimitIndexSlot{}} ** 4;
+    var links: [2]middleware.RateLimitLink = [_]middleware.RateLimitLink{middleware.RateLimitLink{}} ** 2;
+    try std.testing.expectError(
+        error.DuplicateRateLimitKey,
+        middleware.RateLimitTable.init(&duplicate, &slots, &links),
+    );
+    try std.testing.expectError(
+        error.InvalidIndexCapacity,
+        middleware.RateLimitTable.init(&duplicate, slots[0..2], &links),
+    );
+}
+
+test "rate limit: indexed handler bounds a full table through the middleware" {
+    var buckets = [_]middleware.RateLimitBucket{.{}} ** 8;
+    var slots: [16]middleware.RateLimitIndexSlot = [_]middleware.RateLimitIndexSlot{middleware.RateLimitIndexSlot{}} ** 16;
+    var links: [8]middleware.RateLimitLink = [_]middleware.RateLimitLink{middleware.RateLimitLink{}} ** 8;
+    var limiter = try middleware.rate_limit_indexed(std.testing.io, .{
+        .rate_per_second = 1000,
+        .burst = 4,
+        .key_header = "x-tenant",
+    }, &buckets, &slots, &links);
+    try std.testing.expect(limiter.table != null);
+
+    var keys: [9][24]u8 = undefined;
+    for (0..9) |index| {
+        const key = try std.fmt.bufPrint(&keys[index], "tenant-{d}", .{index});
+        var request = header_request("x-tenant", key);
+        var capture = ResponseCapture{};
+        _ = try run_rate_limit(&limiter, &request, &capture);
+    }
+
+    var occupied: usize = 0;
+    for (buckets) |bucket| {
+        if (bucket.last_refill_ns != 0) occupied += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 8), occupied);
+    for (buckets, 0..) |bucket, index| {
+        if (bucket.last_refill_ns == 0) continue;
+        for (buckets[index + 1 ..]) |other| {
+            if (other.last_refill_ns == 0) continue;
+            try std.testing.expect(bucket.key != other.key);
+        }
+    }
+}
+
 test "middleware helpers construct" {
     _ = middleware.security_headers(.{});
 }

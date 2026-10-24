@@ -84,7 +84,7 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache
-          key: ${{ runner.os }}-publish-zig-v7-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'patches/**', 'vendor/libxev_overlay/**', 'vendor/lsquic_overlay/**') }}
+          key: ${{ runner.os }}-publish-zig-v7-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'patches/**', 'vendor/lsquic_overlay/**') }}
           restore-keys: |
             ${{ runner.os }}-publish-zig-v7-
 

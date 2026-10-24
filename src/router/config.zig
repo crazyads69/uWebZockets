@@ -50,6 +50,7 @@ pub const Error = error{
     InvalidHttp3Capacity,
     InvalidRouterCapacity,
     InvalidIdleTimeout,
+    InvalidHeaderReadTimeout,
     InvalidDatagramCapacity,
     InvalidTransportConfiguration,
     InvalidMetricsPath,
@@ -148,8 +149,13 @@ pub const ServerConfig = struct {
     /// Capped at `h3_response_header_count_limit`; the QUIC stream stacks one
     /// transmit descriptor per field.
     max_h3_response_header_count: usize = 64,
-    /// Inactivity timeout in milliseconds; zero disables the sweeper.
+    /// Inactivity timeout for a drained keep-alive connection in milliseconds;
+    /// zero disables the idle deadline.
     idle_timeout_ms: u64 = 120_000,
+    /// Time allowed to finish an incomplete HTTP/1 request head or body;
+    /// zero disables the header deadline. HTTP/2 header blocks are bounded by
+    /// `max_h2_header_block_size` and the connection idle deadline.
+    header_read_timeout_ms: u64 = 30_000,
     /// Reserves per-connection RFC 7692 scratch inside the startup slab.
     compression: bool = false,
     /// Reserves one per-worker gzip codec for `Response.end_gzip`.
@@ -227,6 +233,8 @@ pub const ServerConfig = struct {
         max_h3_response_header_count: ?usize = null,
         /// Replaces `idle_timeout_ms` when non-null.
         idle_timeout_ms: ?u64 = null,
+        /// Replaces `header_read_timeout_ms` when non-null.
+        header_read_timeout_ms: ?u64 = null,
         /// Replaces `compression` when non-null.
         compression: ?bool = null,
         /// Replaces `http_compression` when non-null.
@@ -275,6 +283,7 @@ pub const ServerConfig = struct {
         if (overrides.max_h3_response_header_size) |value| result.max_h3_response_header_size = value;
         if (overrides.max_h3_response_header_count) |value| result.max_h3_response_header_count = value;
         if (overrides.idle_timeout_ms) |value| result.idle_timeout_ms = value;
+        if (overrides.header_read_timeout_ms) |value| result.header_read_timeout_ms = value;
         if (overrides.compression) |value| result.compression = value;
         if (overrides.http_compression) |value| result.http_compression = value;
         if (overrides.transport) |value| result.transport = value;
@@ -314,6 +323,9 @@ pub const ServerConfig = struct {
         // Reject router capacities the radix router cannot represent.
         try self.validate_router();
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
+        if (self.header_read_timeout_ms > std.math.maxInt(i64)) {
+            return error.InvalidHeaderReadTimeout;
+        }
         try self.validate_datagrams();
         try self.validate_transport();
         try self.validate_watch();

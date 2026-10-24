@@ -160,17 +160,28 @@ evicted key empty, so rotating a key cannot reset a budget.
 
 ```zig
 var buckets: [256]uz.middleware.RateLimitBucket = @splat(.{});
-var limiter = uz.middleware.rate_limit(io, .{
+var slots: [512]uz.middleware.RateLimitIndexSlot = @splat(.{});
+var links: [256]uz.middleware.RateLimitLink = @splat(.{});
+var limiter = try uz.middleware.rate_limit_indexed(io, .{
     .rate_per_second = 20,
     .burst = 40,
     .key_header = "x-api-key", // server-derived values only
-}, &buckets);
+}, &buckets, &slots, &links);
 _ = try app.use(&limiter, uz.middleware.RateLimit.handler);
 ```
 
-Both middleware types are allocation-free. One bucket table belongs to one
-event loop; create one per cluster worker. Prefer `key_fn` or `key_constant`
-when the key header can be set by the client.
+`rate_limit_indexed` is the O(1) path: an open-addressed key index plus an
+intrusive LRU over the caller-owned links. `slots.len` must be at least twice
+`buckets.len`, and `links.len` must equal `buckets.len`. A hit and a free-slot
+insert are O(1) expected; a full-table miss evicts the exact oldest bucket,
+with the lowest bucket index winning equal timestamps, and starts the new key
+with zero tokens. Tombstones trigger an amortized rehash. The older
+`rate_limit(io, options, buckets)` constructor remains as the documented linear
+compatibility path for pre-seeded tables without index storage.
+
+Both middleware types are allocation-free. One table belongs to one event loop;
+create one per cluster worker. Prefer `key_fn` or `key_constant` when the key
+header can be set by the client.
 
 ## Static files
 

@@ -53,7 +53,9 @@ pub fn main(init: std.process.Init) !void {
 ```
 
 The returned view borrows `storage`: header names, header values, and the body
-stay valid as long as `storage` does.
+stay valid as long as `storage` does. The incremental parser keeps a monotonic
+delimiter cursor across reads, so byte-at-a-time delivery costs linear scan work
+in the response size rather than rescanning the accumulated prefix.
 
 ## The callback client
 

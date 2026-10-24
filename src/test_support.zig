@@ -3,6 +3,7 @@ pub const loop = @import("core/loop.zig");
 pub const pool = @import("core/pool.zig");
 pub const tcp = @import("core/tcp.zig");
 pub const timer = @import("core/timer.zig");
+pub const timer_wheel = @import("core/timer_wheel.zig");
 pub const signal = @import("core/signal.zig");
 pub const simd = @import("core/simd.zig");
 pub const transport = @import("core/transport.zig");

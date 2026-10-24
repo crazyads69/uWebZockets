@@ -49,19 +49,24 @@ slab instead.
 
 ## Heartbeats and idle peers
 
-Heartbeat-enabled routes reuse the connection sweeper: idle peers receive an
+Heartbeat-enabled routes use a five-second worker timer: idle peers receive an
 empty ping and are closed if the configured pong timeout expires. The default
 idle timeout is 120 seconds, refreshed by successful reads and writes. Use
 `ConfiguredAppWithTimeout` to select another compile-time timeout, or zero to
-disable idle sweeping.
+disable the idle deadline. Deadlines run on the per-worker timing wheel; a
+partially received HTTP/1 request uses `header_read_timeout_ms` instead.
 
 ## Pub/sub
 
 The bounded pub/sub engine is embedded directly in the application value.
 Subscriptions are fixed-capacity; publishing never allocates and reports the
-number of subscribers reached. `App.cluster` coordinates cross-worker publishes
-through a bounded lock-free inbox per worker, and `Cluster.publish` broadcasts
-to every worker. See [architecture.md](architecture.md) for the ring design.
+number of subscribers reached. Topic ids and subscription rows are stable, each
+topic owns an intrusive subscriber list, and open-addressed topic and
+subscription indexes make lookup O(1) expected. Publish work is proportional to
+the live subscribers of the published topic, not the global subscription count.
+`App.cluster` coordinates cross-worker publishes through a bounded lock-free
+inbox per worker, and `Cluster.publish` broadcasts to every worker. See
+[architecture.md](architecture.md) for the ring design.
 
 ## WebSocket over HTTP/2
 

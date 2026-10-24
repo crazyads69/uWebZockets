@@ -110,11 +110,34 @@ pub const ResponseState = enum(u8) {
     ended,
 };
 
+/// Parks a deferred response until `delay_ms` elapses, then invokes `resume`.
+pub const AsyncSleepFn = *const fn (
+    context: *anyopaque,
+    delay_ms: u64,
+    resume_ctx: *anyopaque,
+    resume_fn: *const fn (*anyopaque) void,
+) void;
+
+/// Parks a deferred response and completes it with borrowed response fields
+/// when the delay expires. The slices must outlive the delay.
+pub const AsyncSleepCompleteFn = *const fn (
+    context: *anyopaque,
+    delay_ms: u64,
+    token: AsyncResponse,
+    status: []const u8,
+    headers: []const u8,
+    body: []const u8,
+) void;
+
 /// Transport callbacks retained by a connection-owned async response state.
 pub const AsyncTarget = struct {
     context: *anyopaque,
     complete_fn: AsyncCompleteFn,
     wake_fn: AsyncWakeFn,
+    /// Null on transports without a connection-owned timer slot.
+    sleep_fn: ?AsyncSleepFn = null,
+    /// Null on transports that cannot retain a completion payload.
+    sleep_complete_fn: ?AsyncSleepCompleteFn = null,
 };
 
 /// Lifecycle of one connection-owned async response slot.
@@ -201,6 +224,44 @@ pub const AsyncResponse = struct {
         self.owner.state = .completed;
         self.owner.target = null;
         target.wake_fn(target.context);
+    }
+
+    /// Parks the response until `delay_ms` elapses, then invokes `resume`.
+    ///
+    /// The slot is owned by the connection or stream, so a re-armed generation
+    /// and a disconnected peer fail closed. `resume` must complete this exact
+    /// token; completing it from any other callback races the transport.
+    pub fn sleep(
+        self: AsyncResponse,
+        delay_ms: u64,
+        resume_ctx: *anyopaque,
+        resume_fn: *const fn (*anyopaque) void,
+    ) !void {
+        if (!self.is_pending()) return error.AsyncResponseExpired;
+        const target = self.owner.target orelse return error.AsyncResponseExpired;
+        const sleep_fn = target.sleep_fn orelse return error.TimerUnavailable;
+        sleep_fn(target.context, delay_ms, resume_ctx, resume_fn);
+    }
+
+    /// Parks the response and completes it with borrowed fields on expiry.
+    ///
+    /// This is the zero-allocation `/delay` path: the transport stores the
+    /// token and the three slices in its connection-owned parking slot. The
+    /// caller must keep the slices valid until `delay_ms` elapses.
+    pub fn sleep_complete(
+        self: AsyncResponse,
+        delay_ms: u64,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) !void {
+        if (!self.is_pending()) return error.AsyncResponseExpired;
+        const code = status_code(status) orelse return error.InvalidStatus;
+        if (!valid_headers(headers)) return error.InvalidHeaders;
+        if (status_forbids_body(code) and body.len != 0) return error.BodyNotAllowed;
+        const target = self.owner.target orelse return error.AsyncResponseExpired;
+        const sleep_fn = target.sleep_complete_fn orelse return error.TimerUnavailable;
+        sleep_fn(target.context, delay_ms, self, status, headers, body);
     }
 
     /// Reports whether this exact generation can still complete.

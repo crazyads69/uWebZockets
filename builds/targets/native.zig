@@ -19,20 +19,11 @@ pub fn inject(
     const zslay_dependency = b.dependency("zslay", .{ .target = target, .optimize = optimize });
     const xev_dependency = b.dependency("libxev", .{ .target = target, .optimize = optimize });
     const zslay = zslay_dependency.module("zslay");
-    // The IOCP accept fix is carried as an auditable overlay because the
-    // pinned libxev revision predates it. Copy the dependency once and replace
-    // the single patched file so Zig's package cache is never modified.
-    const xev_tree = b.addWriteFiles();
-    _ = xev_tree.addCopyDirectory(xev_dependency.path(""), "", .{});
-    _ = xev_tree.addCopyFile(
-        b.path("vendor/libxev_overlay/src/backend/iocp.zig"),
-        "src/backend/iocp.zig",
-    );
-    const xev_impl = b.createModule(.{
-        .root_source_file = xev_tree.getDirectory().path(b, "src/main.zig"),
-    });
+    // The pinned dependency is the maintained downstream fork; XEV-001 lives
+    // in its integration branch, so no local source overlay is applied.
+    const xev_impl = xev_dependency.module("xev");
     // Transport code imports this shim as "xev" so the loop can fall back from
-    // io_uring to epoll at runtime; the patched libxev is imported underneath.
+    // io_uring to epoll at runtime; the fork is imported underneath.
     const xev = b.createModule(.{
         .root_source_file = b.path("src/core/xev.zig"),
         .target = target,

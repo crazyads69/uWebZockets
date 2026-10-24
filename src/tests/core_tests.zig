@@ -81,6 +81,80 @@ test "core: timer init and deinit" {
     defer timer.deinit_timer(&t);
 }
 
+fn mark_fired(ctx: *anyopaque) void {
+    const fired: *bool = @ptrCast(@alignCast(ctx));
+    fired.* = true;
+}
+
+test "core: timer scheduler fires one wheel deadline and drains" {
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var scheduler = try timer.Scheduler.init(std.testing.io);
+    defer scheduler.deinit();
+    scheduler.start(&event_loop);
+
+    var fired = false;
+    var node: support.timer_wheel.TimerNode = .{};
+    timer.sleep(&scheduler, &node, 1, &fired, mark_fired);
+    try event_loop.xev_loop.run(.until_done);
+    try std.testing.expect(fired);
+    try std.testing.expectEqual(@as(usize, 0), scheduler.wheel.count);
+
+    scheduler.stop(&event_loop);
+    try event_loop.xev_loop.run(.until_done);
+}
+
+test "core: timer scheduler stop after a reset drains without the old deadline" {
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var scheduler = try timer.Scheduler.init(std.testing.io);
+    defer scheduler.deinit();
+    scheduler.start(&event_loop);
+
+    var late_fired = false;
+    var early_fired = false;
+    var late: support.timer_wheel.TimerNode = .{};
+    var early: support.timer_wheel.TimerNode = .{};
+    timer.sleep(&scheduler, &late, 60_000, &late_fired, mark_fired);
+    // This earlier deadline queues the old timer's cancellation.
+    timer.sleep(&scheduler, &early, 30_000, &early_fired, mark_fired);
+    const started = std.Io.Clock.now(.awake, std.testing.io).nanoseconds;
+    scheduler.stop(&event_loop);
+    try event_loop.xev_loop.run(.until_done);
+    const elapsed = std.Io.Clock.now(.awake, std.testing.io).nanoseconds - started;
+    try std.testing.expect(elapsed < 2 * std.time.ns_per_s);
+    try std.testing.expect(!late_fired);
+    try std.testing.expect(!early_fired);
+}
+
+test "core: timer scheduler rearms an earlier deadline" {
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var scheduler = try timer.Scheduler.init(std.testing.io);
+    defer scheduler.deinit();
+    scheduler.start(&event_loop);
+
+    var late_fired = false;
+    var early_fired = false;
+    var late: support.timer_wheel.TimerNode = .{};
+    var early: support.timer_wheel.TimerNode = .{};
+    timer.sleep(&scheduler, &late, 60_000, &late_fired, mark_fired);
+    timer.sleep(&scheduler, &early, 1, &early_fired, mark_fired);
+
+    var spins: usize = 0;
+    while (!early_fired and spins < 100) : (spins += 1) {
+        try event_loop.xev_loop.run(.once);
+    }
+    try std.testing.expect(early_fired);
+    try std.testing.expect(!late_fired);
+
+    scheduler.stop(&event_loop);
+    try event_loop.xev_loop.run(.until_done);
+}
+
 test "tcp: accept retry delay backs off to a bounded ceiling" {
     try std.testing.expectEqual(@as(u64, 0), tcp.accept_retry_delay_ms(0));
     try std.testing.expectEqual(@as(u64, 0), tcp.accept_retry_delay_ms(1));

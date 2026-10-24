@@ -187,6 +187,52 @@ test "client parser: chunked body survives every two-part split" {
     }
 }
 
+test "client parser: scan work stays linear for dribbled responses" {
+    const wires = [_][]const u8{
+        "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nX-Test: yes\r\n\r\nhello world",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" ++
+            "5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\nX-Trailer: yes\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" ++
+            "3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n",
+    };
+    for (wires) |wire| {
+        var harness = ResponseHarness{ .parser = http1.Parser.init(1024, false) };
+        var completed = false;
+        for (wire, 0..) |_, index| {
+            switch (harness.feed(wire[index .. index + 1])) {
+                .need_more => {},
+                .complete => |view| {
+                    completed = true;
+                    try std.testing.expect(view.body.len != 0);
+                    break;
+                },
+                .failed => return error.ResponseParseFailed,
+            }
+        }
+        try std.testing.expect(completed);
+        try std.testing.expect(harness.parser.scan_work <= 4 * wire.len + 32);
+    }
+}
+
+test "client parser: header and trailer terminators split at every position" {
+    const head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" ++
+        "2\r\nhi\r\n0\r\nX-Trailer: yes\r\n\r\n";
+    var split: usize = 1;
+    while (split < head.len) : (split += 1) {
+        var harness = ResponseHarness{ .parser = http1.Parser.init(64, false) };
+        switch (harness.feed(head[0..split])) {
+            .need_more => {},
+            .complete => return error.CompletedTooEarly,
+            .failed => return error.EarlyFailure,
+        }
+        switch (harness.feed(head[split..])) {
+            .complete => |view| try std.testing.expectEqualStrings("hi", view.body),
+            .need_more => return error.MissingFinalResponse,
+            .failed => return error.LateFailure,
+        }
+    }
+}
+
 test "client parser: rejects conflicting framing" {
     try std.testing.expectEqual(
         http1.ParseFailure.conflicting_framing,

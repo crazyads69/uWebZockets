@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 2.0.6 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 2.1.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -414,14 +414,14 @@ deterministically, and defines native and musl compile checks. `build.zig.zon`
 pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and zlib
 by immutable URL or commit plus Zig package hash.
 
-libxev provenance follows the [fork policy](docs/libxev_fork.md). As of
-2026-10-24, `build.zig.zon` still pins upstream `mitchellh/libxev` at
-`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, and the Windows IOCP `AcceptEx`
-fix remains the [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md)
-overlay. [ADR 0005](docs/adr/0005-libxev-fork.md) selects
-`farbenbuilds/libxev` as the maintained fork: the next libxev dependency update
-moves the pin to a full 40-hex fork commit on `uwz/zig-0.16`, carries the fix
-as a ledgered `uwz` commit, and removes the overlay.
+libxev provenance follows the [fork policy](docs/libxev_fork.md).
+`build.zig.zon` pins `farbenbuilds/libxev` at the full commit
+`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`; the branch is
+based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries
+XEV-001 (IOCP `AcceptEx` ownership) and XEV-002 (Winsock error mapping)
+([ADR 0005](docs/adr/0005-libxev-fork.md)). The overlay and audit patch are
+deleted; `scripts/check_libxev_fork.sh` checks all four dependency views and
+the remote commit.
 
 A downstream project can pin
 an exact checkout at a local path without fetching the repository's

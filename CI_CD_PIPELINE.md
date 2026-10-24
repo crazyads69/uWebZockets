@@ -203,10 +203,10 @@ second native job. Windows remains compile-checked in the support claim until
 that runtime job is green for the release commit; no Windows binaries are
 published.
 
-The 1.9.0 work removes both runtime blockers. The pinned libxev IOCP backend is
-built with an auditable overlay that clears `internal_accept_socket` on the
-success and error paths, so a re-armed accept allocates a fresh socket instead
-of calling `AcceptEx` on a connected one. The transport submits queued IOCP
+The 1.9.0 work removes both runtime blockers. The pinned libxev fork carries
+XEV-001, which clears `internal_accept_socket` on the success and error paths,
+so a re-armed accept allocates a fresh socket instead of calling `AcceptEx` on
+a connected one. The transport submits queued IOCP
 completions before canceling them, so a connection closed in the callback that
 queued its read or write reaches `CancelIoEx` and its target callback clears
 `read_active`/`is_writing`. The decision and rollback path are in
@@ -229,26 +229,26 @@ on ignored developer certificates.
 
 ## libxev provenance
 
-The current `build.zig.zon` pin is still upstream `mitchellh/libxev` at
-`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, and
-`scripts/check_vendor_overlay.sh` is the overlay gate for the Windows IOCP
-`AcceptEx` patch ([ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md)).
-Migration to the maintained fork is pending.
+`build.zig.zon` pins the maintained fork <https://github.com/farbenbuilds/libxev>
+at the full commit `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on
+`uwz/zig-0.16`. The branch is based on upstream
+`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries XEV-001 (Windows IOCP `AcceptEx` ownership) and XEV-002
+(Winsock error mapping), as a ledgered commit
+([ADR 0005](docs/adr/0005-libxev-fork.md)). The overlay and audit patch are
+deleted.
 
-[ADR 0005](docs/adr/0005-libxev-fork.md) selects
-<https://github.com/farbenbuilds/libxev>. After the next libxev dependency
-update, the manifest pins a full 40-hex fork commit and CI verifies the libxev
-URL, revision, Zig hash, and Nix hash across all four views. Regeneration alone
+CI verifies the libxev URL, revision, Zig hash, and Nix hash across all four
+views with `scripts/check_libxev_fork.sh`, including remote resolution of the
+full commit; branches, tags, and short SHAs are rejected. Regeneration alone
 is not proof because `scripts/update_zon_files.sh` can skip when zon2nix or nix
-is absent; lint adds that comparison. A fork provenance check replaces the
-libxev half of `scripts/check_vendor_overlay.sh` and resolves the exact commit
-at the fork, rejecting a branch, tag, or short SHA. Lint also runs the
+is absent. `scripts/check_vendor_overlay.sh` now covers only the lsquic
+overlay. Lint also runs the
 stale-phrase grep. Before release, resolve the pinned commit from a second
 machine and against the retained archive or local bare mirror. Release and
 benchmark provenance record the fork commit and its upstream base; tags are
-never authoritative. Fork `main` and `uwz/zig-0.16` require branch protection
-before the first pin. Until the migration lands, the upstream pin and overlay
-gate remain the release contract. The normative procedure is
+never authoritative. Fork `main` and `uwz/zig-0.16` require branch protection;
+`main` is an exact read-only mirror and the integration branch is append-only.
+The normative procedure and patch ledger are in
 [docs/libxev_fork.md](docs/libxev_fork.md).
 
 ## Performance regression

@@ -4,6 +4,8 @@ const xev = @import("xev");
 const c = @import("c");
 const Loop = @import("loop.zig").Loop;
 const core_loop = @import("loop.zig");
+const core_timer = @import("timer.zig");
+const timer_wheel = @import("timer_wheel.zig");
 const http_parser = @import("../http/parser.zig");
 const HttpParser = http_parser.HttpParser;
 const http_status = @import("../http/status.zig");
@@ -65,6 +67,29 @@ const Http2AsyncContext = struct {
     stream_id: u32 = 0,
 };
 
+/// Resumes an application handler after a parked delay expires.
+pub const SleepResume = *const fn (ctx: *anyopaque) void;
+
+const DelayedCompletion = struct {
+    token: http_response.AsyncResponse,
+    status: []const u8,
+    headers: []const u8,
+    body: []const u8,
+};
+
+/// One connection-owned parking slot. Slot 0 serves HTTP/1; the remaining
+/// slots map one-to-one to HTTP/2 streams.
+const SleepSlot = struct {
+    connection: *TcpConnection = undefined,
+    resume_fn: ?SleepResume = null,
+    resume_ctx: *anyopaque = undefined,
+    completion: ?DelayedCompletion = null,
+    node: timer_wheel.TimerNode = .{},
+};
+
+/// HTTP/1 parking slot plus one per HTTP/2 stream.
+pub const sleep_slot_capacity = max_http2_streams + 1;
+
 /// Returns a fully closed connection to its owning fixed-capacity pool.
 pub const CloseCallback = *const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void;
 
@@ -119,6 +144,18 @@ pub const TcpConnection = struct {
     // until `begin_response` succeeds. Completion logs read it before the
     // terminal frame releases the slot.
     h2_response_status: [max_http2_streams]u16 = .{0} ** max_http2_streams,
+
+    // One wheel node per connection for keep-alive/header deadlines and the
+    // parking slots used by deferred responses. All storage is in the pooled
+    // connection; scheduling never allocates.
+    timer_scheduler: ?*core_timer.Scheduler = null,
+    idle_timer: timer_wheel.TimerNode = .{},
+    idle_timeout_ms: u64 = 0,
+    header_timeout_ms: u64 = 0,
+    sleep_slots: [sleep_slot_capacity]SleepSlot = [_]SleepSlot{.{}} ** sleep_slot_capacity,
+    /// Parked delayed responses. While non-zero, the connection idle deadline
+    /// is suppressed so a long delay cannot be reaped mid-flight.
+    parked_sleeps: u16 = 0,
 
     last_active_ms: i64 = 0,
     request_len: usize = 0,
@@ -196,6 +233,156 @@ pub const TcpConnection = struct {
     /// Returns a cancellation signal scoped to the current pooled connection.
     pub fn abort_signal(self: *const TcpConnection) abort.AbortSignal {
         return self.abort_controller.signal();
+    }
+
+    /// Binds the worker scheduler and applies the connection timeout policy.
+    pub fn attach_timer_scheduler(
+        self: *TcpConnection,
+        scheduler: *core_timer.Scheduler,
+        idle_timeout_ms: u64,
+        header_timeout_ms: u64,
+    ) void {
+        self.timer_scheduler = scheduler;
+        self.idle_timeout_ms = idle_timeout_ms;
+        self.header_timeout_ms = header_timeout_ms;
+        self.touch_activity();
+    }
+
+    /// Resets the keep-alive or header-read deadline after observable activity.
+    ///
+    /// A partially received request uses the header deadline; a drained
+    /// connection uses the keep-alive deadline. Deferred work owns its own
+    /// parking timer and suppresses the idle deadline.
+    pub fn touch_activity(self: *TcpConnection) void {
+        const scheduler = self.timer_scheduler orelse return;
+        if (self.closing or self.dispatch_suspended or self.parked_sleeps != 0) {
+            _ = scheduler.cancel(&self.idle_timer);
+            return;
+        }
+        const partial_request = self.request_len != 0 or
+            self.parser.state != .method and self.parser.state != .done;
+        const timeout = if (partial_request) self.header_timeout_ms else self.idle_timeout_ms;
+        if (timeout == 0) {
+            _ = scheduler.cancel(&self.idle_timer);
+            return;
+        }
+        scheduler.schedule_after(&self.idle_timer, timeout, on_idle_timeout, self);
+    }
+
+    /// Cancels every wheel node owned by this connection.
+    pub fn cancel_timers(self: *TcpConnection) void {
+        if (self.timer_scheduler) |scheduler| {
+            _ = scheduler.cancel(&self.idle_timer);
+            for (&self.sleep_slots) |*slot| {
+                _ = scheduler.cancel(&slot.node);
+                if (slot.resume_fn != null and self.parked_sleeps != 0) {
+                    self.parked_sleeps -= 1;
+                }
+                slot.resume_fn = null;
+                slot.completion = null;
+            }
+        }
+        self.timer_scheduler = null;
+    }
+
+    fn cancel_sleep_slot(self: *TcpConnection, slot_index: usize) void {
+        const slot = &self.sleep_slots[slot_index];
+        if (slot.resume_fn == null) return;
+        if (self.timer_scheduler) |scheduler| _ = scheduler.cancel(&slot.node);
+        if (self.parked_sleeps != 0) self.parked_sleeps -= 1;
+        slot.resume_fn = null;
+        slot.completion = null;
+    }
+
+    /// Parks `resume` on the connection-owned HTTP/1 slot for `delay_ms`.
+    fn park_http1(self: *TcpConnection, delay_ms: u64, ctx: *anyopaque, resume_fn: SleepResume) void {
+        const scheduler = self.timer_scheduler orelse {
+            // No timer engine: fail the parked request instead of hanging.
+            close_connection(self);
+            return;
+        };
+        const slot = &self.sleep_slots[0];
+        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
+        _ = scheduler.cancel(&self.idle_timer);
+        slot.connection = self;
+        slot.resume_fn = resume_fn;
+        slot.resume_ctx = ctx;
+        slot.completion = null;
+        scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
+    }
+
+    fn park_complete_http1(
+        self: *TcpConnection,
+        delay_ms: u64,
+        token: http_response.AsyncResponse,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) void {
+        const scheduler = self.timer_scheduler orelse {
+            close_connection(self);
+            return;
+        };
+        const slot = &self.sleep_slots[0];
+        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
+        _ = scheduler.cancel(&self.idle_timer);
+        slot.connection = self;
+        slot.resume_fn = on_delayed_completion;
+        slot.resume_ctx = slot;
+        slot.completion = .{
+            .token = token,
+            .status = status,
+            .headers = headers,
+            .body = body,
+        };
+        scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
+    }
+
+    fn park_complete_http2(
+        self: *TcpConnection,
+        stream_id: u32,
+        delay_ms: u64,
+        token: http_response.AsyncResponse,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) !void {
+        const scheduler = self.timer_scheduler orelse return error.TimerUnavailable;
+        const index = self.h2.connection.streams.find(stream_id) orelse
+            return error.StreamClosed;
+        const slot = &self.sleep_slots[index + 1];
+        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
+        _ = scheduler.cancel(&self.idle_timer);
+        slot.connection = self;
+        slot.resume_fn = on_delayed_completion;
+        slot.resume_ctx = slot;
+        slot.completion = .{
+            .token = token,
+            .status = status,
+            .headers = headers,
+            .body = body,
+        };
+        scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
+    }
+
+    fn park_http2(
+        self: *TcpConnection,
+        stream_id: u32,
+        delay_ms: u64,
+        ctx: *anyopaque,
+        resume_fn: SleepResume,
+    ) !void {
+        const scheduler = self.timer_scheduler orelse return error.TimerUnavailable;
+        const index = self.h2.connection.streams.find(stream_id) orelse
+            return error.StreamClosed;
+        const slot = &self.sleep_slots[index + 1];
+        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
+        _ = scheduler.cancel(&self.idle_timer);
+        slot.connection = self;
+        slot.resume_fn = resume_fn;
+        slot.resume_ctx = ctx;
+        slot.completion = null;
+        scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
     }
 
     /// Allocates BoringSSL state and attaches bounded paired memory BIOs.
@@ -402,13 +589,23 @@ pub const TcpConnection = struct {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         if (self.ws.initialized and self.ws.h2_stream_id == stream_id) self.ws.deinit();
         if (index >= self.h2_async_states.len) return;
+
+        // A slot is either still the closing stream, or already released and
+        // not yet reused. A different active id means a stale notification for
+        // a recycled slot and must not touch the new stream.
+        const streams = &self.h2.connection.streams;
+        const still_closing = streams.active[index] and streams.stream_ids[index] == stream_id;
+        if (!still_closing and streams.active[index]) return;
+
         self.h2_response_status[index] = 0;
-        // Producers have no stream-id mirror; a close notification is exact for
-        // its slot, so the bounds check is the only guard the slot needs.
         self.clear_http2_producer(index);
         if (self.h2_async_contexts[index].stream_id != stream_id) return;
+        self.cancel_sleep_slot(index + 1);
         if (self.h2_async_states[index].is_pending()) self.h2_async_states[index].cancel();
         self.h2_async_contexts[index].stream_id = 0;
+        // A canceled parked delay must not leave the connection with no idle
+        // deadline at all.
+        self.touch_activity();
     }
 
     fn write_http2_parts(context: *anyopaque, parts: []const []const u8) !void {
@@ -785,7 +982,48 @@ pub const TcpConnection = struct {
             .context = &self.h2_async_contexts[index],
             .complete_fn = complete_http2_async_response,
             .wake_fn = wake_http2_async_response,
+            .sleep_fn = sleep_http2_response,
+            .sleep_complete_fn = sleep_complete_http2_response,
         });
+    }
+
+    fn sleep_complete_http2_response(
+        context: *anyopaque,
+        delay_ms: u64,
+        token: http_response.AsyncResponse,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) void {
+        const async_context: *Http2AsyncContext = @ptrCast(@alignCast(context));
+        const self = async_context.connection;
+        self.park_complete_http2(
+            async_context.stream_id,
+            delay_ms,
+            token,
+            status,
+            headers,
+            body,
+        ) catch {
+            const callbacks = self.http2_callbacks();
+            self.h2.reset_stream(async_context.stream_id, .internal_error, callbacks) catch
+                close_connection(self);
+        };
+    }
+
+    fn sleep_http2_response(
+        context: *anyopaque,
+        delay_ms: u64,
+        resume_ctx: *anyopaque,
+        resume_fn: SleepResume,
+    ) void {
+        const async_context: *Http2AsyncContext = @ptrCast(@alignCast(context));
+        const self = async_context.connection;
+        self.park_http2(async_context.stream_id, delay_ms, resume_ctx, resume_fn) catch {
+            const callbacks = self.http2_callbacks();
+            self.h2.reset_stream(async_context.stream_id, .internal_error, callbacks) catch
+                close_connection(self);
+        };
     }
 
     fn complete_http2_async_response(
@@ -822,6 +1060,9 @@ pub const TcpConnection = struct {
     }
 
     fn route_http_data(self: *TcpConnection, data: []const u8) void {
+        // Re-arm the idle/header deadline after every parse or dispatch exit;
+        // the partial-request check sees the post-dispatch parser state.
+        defer self.touch_activity();
         // The outer TLS drain may already own a batch. Otherwise begin one
         // only when the parser proves another request follows, preserving the
         // single-request direct-send fast path.
@@ -1084,7 +1325,31 @@ pub const TcpConnection = struct {
             .context = self,
             .complete_fn = complete_async_response,
             .wake_fn = wake_async_dispatch,
+            .sleep_fn = sleep_http1_response,
+            .sleep_complete_fn = sleep_complete_http1_response,
         };
+    }
+
+    fn sleep_complete_http1_response(
+        context: *anyopaque,
+        delay_ms: u64,
+        token: http_response.AsyncResponse,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        self.park_complete_http1(delay_ms, token, status, headers, body);
+    }
+
+    fn sleep_http1_response(
+        context: *anyopaque,
+        delay_ms: u64,
+        resume_ctx: *anyopaque,
+        resume_fn: SleepResume,
+    ) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        self.park_http1(delay_ms, resume_ctx, resume_fn);
     }
 
     fn complete_async_response(
@@ -1143,6 +1408,7 @@ pub const TcpConnection = struct {
             if (self.ssl) |ssl| self.drain_tls_plaintext(ssl);
         }
 
+        self.touch_activity();
         if (!self.dispatch_suspended and !self.closing and !self.close_when_drained and
             !self.read_active)
         {
@@ -1564,6 +1830,7 @@ fn on_read_complete(
 
     const now = std.Io.Clock.now(.awake, conn.io);
     conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
+    conn.touch_activity();
 
     const data = conn.read_buffer[0..bytes_read];
     if (conn.ssl) |ssl| {
@@ -1618,6 +1885,7 @@ fn on_write_complete(
 
     const now = std.Io.Clock.now(.awake, conn.io);
     conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
+    conn.touch_activity();
 
     conn.write_len -= written;
     conn.write_head = advance_write_head(
@@ -1715,6 +1983,7 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.write_batch_depth = 0;
     conn.clear_stream();
     conn.protocol_probe_len = 0;
+    conn.cancel_timers();
     conn.async_response_state.cancel();
     for (&conn.h2_async_states) |*state| state.cancel();
 
@@ -1839,6 +2108,37 @@ fn on_write_cancel_complete(
     conn.write_cancel_active = false;
     release_closed_connection(conn);
     return .disarm;
+}
+
+fn on_idle_timeout(ctx: *anyopaque) void {
+    const conn: *TcpConnection = @ptrCast(@alignCast(ctx));
+    if (conn.closing) return;
+    close_connection(conn);
+}
+
+fn on_sleep_expired_slot(ctx: *anyopaque) void {
+    const slot: *SleepSlot = @ptrCast(@alignCast(ctx));
+    const resume_fn = slot.resume_fn orelse return;
+    slot.resume_fn = null;
+    if (slot.connection.parked_sleeps != 0) slot.connection.parked_sleeps -= 1;
+    if (slot.connection.closing) return;
+    // Re-arm before invoking application code: a resume may complete the
+    // response and synchronously return the slot to the pool on Windows.
+    slot.connection.touch_activity();
+    resume_fn(slot.resume_ctx);
+}
+
+fn on_delayed_completion(ctx: *anyopaque) void {
+    const slot: *SleepSlot = @ptrCast(@alignCast(ctx));
+    const completion = slot.completion orelse return;
+    slot.completion = null;
+    completion.token.complete_with_headers(
+        completion.status,
+        completion.headers,
+        completion.body,
+    ) catch |err| {
+        log.debug("delayed completion failed: {}", .{err});
+    };
 }
 
 /// Returns a fully closed connection to its owning fixed-capacity pool.
@@ -2154,7 +2454,7 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
 
     // kqueue and IOCP defer an armed accept until submit. Flush first so the
     // cancel observes an active target instead of dropping its callback.
-    if (xev.submit_before_cancel()) {
+    if (builtin.os.tag == .windows or xev.submit_before_cancel()) {
         xev.submit(loop.get_xev_loop()) catch |err| {
             log.err("accept submit before close failed: {}", .{err});
         };

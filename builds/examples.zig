@@ -18,6 +18,7 @@ const examples = [_]Example{
     .{ .name = "custom_builder", .source = "examples/custom_builder.zig", .description = "Run the custom builder example" },
     .{ .name = "shared_nothing_cluster", .source = "examples/shared_nothing_cluster.zig", .description = "Run the shared-nothing worker group example" },
     .{ .name = "tls_cluster", .source = "examples/tls_cluster.zig", .description = "Run the TLS-enabled worker group example" },
+    .{ .name = "delay_server", .source = "examples/delay_server.zig", .description = "Run the async /delay timing-wheel example" },
 };
 
 pub fn inject(

@@ -374,6 +374,76 @@ test "ws: pubsub defers reentrant removals until the publish frame ends" {
     try std.testing.expect(third_conn.write_len > 0);
 }
 
+test "ws: publish visits only the live subscribers of one topic" {
+    var engine = PubSubEngine{};
+    var hot_conns: [3]TcpConnection = undefined;
+    var hot_sockets: [3]WebSocket = undefined;
+    var hot_writes: [3][64]u8 = undefined;
+    for (0..3) |index| {
+        try init_pubsub_socket(&hot_sockets[index], &hot_conns[index], &hot_writes[index]);
+        try engine.subscribe(&hot_sockets[index], "hot");
+    }
+
+    var cold_conn: TcpConnection = undefined;
+    var cold_socket: WebSocket = undefined;
+    var cold_write: [64]u8 = undefined;
+    try init_pubsub_socket(&cold_socket, &cold_conn, &cold_write);
+    for (0..64) |index| {
+        var name_buffer: [32]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buffer, "cold-{d}", .{index});
+        try engine.subscribe(&cold_socket, name);
+    }
+
+    engine.publish_visits = 0;
+    try std.testing.expectEqual(@as(usize, 3), engine.publish("hot", "x", true));
+    try std.testing.expectEqual(@as(usize, 3), engine.publish_visits);
+    try std.testing.expectEqual(@as(usize, 0), cold_conn.write_len);
+
+    // Emptying the topic frees its id; reuse must not deliver to any old row.
+    for (&hot_sockets) |*socket| {
+        try std.testing.expect(engine.unsubscribe(socket, "hot"));
+    }
+    try std.testing.expectEqual(@as(usize, 64), engine.topic_count);
+    var replacement_conn: TcpConnection = undefined;
+    var replacement_socket: WebSocket = undefined;
+    var replacement_write: [64]u8 = undefined;
+    try init_pubsub_socket(&replacement_socket, &replacement_conn, &replacement_write);
+    try engine.subscribe(&replacement_socket, "hot");
+    const hot_bytes = hot_conns[1].write_len;
+    try std.testing.expectEqual(@as(usize, 1), engine.publish("hot", "y", true));
+    try std.testing.expectEqual(hot_bytes, hot_conns[1].write_len);
+    try std.testing.expect(replacement_conn.write_len > 0);
+}
+
+test "ws: pubsub index rebuild during churn keeps subscriptions distinct" {
+    var engine = PubSubEngine{};
+    var first_conn: TcpConnection = undefined;
+    var first_socket: WebSocket = undefined;
+    var first_write: [64]u8 = undefined;
+    try init_pubsub_socket(&first_socket, &first_conn, &first_write);
+    var second_conn: TcpConnection = undefined;
+    var second_socket: WebSocket = undefined;
+    var second_write: [64]u8 = undefined;
+    try init_pubsub_socket(&second_socket, &second_conn, &second_write);
+
+    // Cross the tombstone threshold so the next insert rebuilds the index.
+    var cycles: usize = 0;
+    while (cycles < 4_200) : (cycles += 1) {
+        try engine.subscribe(&first_socket, "churn");
+        try std.testing.expect(engine.unsubscribe(&first_socket, "churn"));
+    }
+
+    try engine.subscribe(&first_socket, "shared");
+    try engine.subscribe(&second_socket, "shared");
+    try std.testing.expect(engine.unsubscribe(&first_socket, "shared"));
+    // A stale duplicate index entry would make this subscribe look present and
+    // leave the first socket silently unsubscribed.
+    try engine.subscribe(&first_socket, "shared");
+    try std.testing.expectEqual(@as(usize, 2), engine.publish("shared", "z", true));
+    try std.testing.expect(first_conn.write_len > 0);
+    try std.testing.expect(second_conn.write_len > 0);
+}
+
 test "ws: fragmented message completes with an empty continuation" {
     const Capture = struct {
         var calls: usize = 0;

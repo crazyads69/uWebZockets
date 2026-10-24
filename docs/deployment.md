@@ -136,10 +136,10 @@ try app.run();
 
 - `build.zig.zon` pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack,
   libdeflate, and zlib by immutable URL or commit plus a Zig package hash.
-- libxev follows the [maintained fork policy](libxev_fork.md) after the next
-  libxev dependency update: pin a full fork commit, never a branch or tag, and
-  treat `mitchellh/libxev` as read-only. The current upstream pin and the ADR
-  0004 overlay remain until then.
+- libxev follows the [maintained fork policy](libxev_fork.md): the manifest
+  pins a full 40-hex fork commit on `uwz/zig-0.16`, never a branch or tag, and
+  `mitchellh/libxev` stays read-only. XEV-001 is a ledgered fork commit; the
+  former overlay and audit patch are removed.
 - Pin a release tag or full commit in your own `build.zig.zon`; do not track a
   branch.
 - The build needs only Zig 0.16.0; C/C++ dependencies compile with `zig cc` and
