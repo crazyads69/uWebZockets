@@ -1,6 +1,7 @@
 # libxev kqueue findings: invalid submission state and duplicate queueing
 
-Status: evidence recorded, fix not yet landed in `farbenbuilds/libxev`.
+Status: the scheduler workaround shipped in 2.1.6; the libxev fixes are
+proposed but not yet landed in `farbenbuilds/libxev`.
 Date of measurements: 2026-10-25. Host: macOS 26 (Darwin 25.0.0), arm64,
 Zig 0.16.0, `wrk` and `h2load 1.70.0` on the same host as the server. The host
 was under load during the runs (load average about 9.7, headless Chromium and
@@ -14,11 +15,31 @@ Pinned dependency under test: libxev `cbf01bc432a84cd91a99c1cb1031b46416d044c7`
 
 | # | Finding | Evidence | State |
 |---|---------|----------|-------|
-| 1 | The scheduler `.rearm` spin on kqueue starves the loop. HEAD serves 0 req/s on macOS. | `benchmark_http.sh` on HEAD: `0 requests in 10.09s`. Current tree: 50-55k req/s at 64 connections. | Fixed by the working-tree change in `src/core/timer.zig`. |
+| 1 | The scheduler `.rearm` spin starves the loop. HEAD serves 0 req/s on macOS. | `benchmark_http.sh` on HEAD: `0 requests in 10.09s`. Current tree: 50-55k req/s at 64 connections. | Fixed in 2.1.6 by the relative-tick change in `src/core/timer.zig`; the same test fails on Linux io_uring at 2.1.5. |
 | 2 | libxev logs `invalid state in submission queue state=.active` under 64 concurrent connections. | Control: 12 of 28 valid server starts. | Fixed by upstream PR 245 in the scratch tree (0 of 29). |
 | 3 | `queue.zig:24` assert (`v.next == null`) panics `cluster: programmatic shutdown drains the signal watcher`. | Same panic at HEAD and at the working tree. Instrumentation: `op=read state=active` pushed twice from `submit()`. | Fixed in the scratch tree by PR 245 plus a pre-`perform` duplicate guard. |
 | 4 | No memory leak in the measured configurations. | RSS plateau, `leaks` reports 0, descriptors constant. | No action. |
 | 5 | The 256 and 1024 connection throughput collapse of `examples/hello_world.zig` is a capacity limit, not a bottleneck. | `uz.App(128)` caps at 128 connections; profile shows the loop waiting in `kevent`. | No action. |
+
+## Downstream status in 2.1.6
+
+The scheduler workaround from finding 1 shipped in 2.1.6: each tick disarms the
+completed timer and arms a fresh relative five-millisecond timer, and a
+stopping scheduler does not re-arm. This removes the kqueue spin without
+depending on a new libxev pin.
+
+The fork fixes remain proposed in
+<https://github.com/farbenbuilds/libxev/pull/1> on branch
+`fix/kqueue-active-completion-requeue`, based on
+`cbf01bc432a84cd91a99c1cb1031b46416d044c7`:
+
+- XEV-003, keep a rearmed completion active after `submit()` reported it.
+- XEV-004, queue a still-readable completion once before `perform()`.
+
+They are not merged, pinned, or claimed by 2.1.6. The cluster
+`programmatic shutdown drains the signal watcher` panic therefore remains on
+kqueue until the fork PR is reviewed, merged into `uwz/zig-0.16`, and pinned in
+all four dependency views under [dependency_forks.md](dependency_forks.md).
 
 ## Upstream research (read-only; upstream is fetch-only for this project)
 
@@ -161,8 +182,12 @@ the libxev error and the server needed `SIGKILL`.
 - The full committed h2 matrix (64 to 2048 connections, 1 and 8 streams, 3
   samples, 10 s). Only reduced matrices ran, in a scratch copy of the env file.
 - The plaintext-cluster control.
-- Any Linux run. The timer defect is kqueue-specific, so a Linux A/B would show
-  no difference for finding 1, and finding 2 and 3 are kqueue-specific.
+- Any Linux A/B throughput run. Findings 2 and 3 are kqueue-specific, but
+  finding 1 is not: applying only the new scheduler tests to the v2.1.5 tree on
+  Linux io_uring fails `scheduler advances at the next timer interval` and
+  `does not rearm after a callback stops it`. The zero-request symptom was
+  observed on macOS, while the expired-absolute-timeout mechanism is shared by
+  the kqueue, epoll, and io_uring timer implementations.
 - A CPU hotspot profile of `tls_cluster` under load.
 - Landing the libxev change. Policy requires a `uwz(<area>)` patch commit on
   `farbenbuilds/libxev` branch `uwz/zig-0.16`, review, a full 40-hex pin, and

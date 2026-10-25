@@ -85,6 +85,19 @@ path or the shared-nothing ownership model.
 | Thread lifecycle was inline in the application type | `src/router/worker_group.zig` owns lifecycle policy, release claiming, borrowed thread start/join, and first-failure capture; thread storage and compatibility fields stay in `Cluster` |
 | Cluster configuration used an untyped callback | `Cluster.configure` accepts the named `ConfigureCallback` function pointer |
 
+## Closed in 2.1.6
+
+The 2.1.6 patch release removes the absolute-timer replay that starved kqueue
+and could spin the other absolute-timer backends, and makes local benchmark
+evidence fail closed without changing a public API or a wire format.
+
+| Boundary | Resolution |
+| --- | --- |
+| The expired timer deadline could starve the loop | `timer.Scheduler` disarms the completed timer and arms a fresh relative five-millisecond tick instead of returning `.rearm`; a stopping scheduler does not re-arm. The spin was observed on macOS kqueue and the mechanism is shared by every absolute-timer backend. The per-worker deadline wheel is unchanged |
+| `set_nodelay` trapped after a reset peer | The raw `setsockopt` result is ignored as a documented best-effort operation, so Darwin `EINVAL` cannot reach the `std.posix` unreachable branch during accept |
+| Benchmark samples could pass with missing data | The HTTP/2 runner fails on missing request counters, invalid p99 values, non-TLSv1.3 samples, exit status 143 on the TLS cluster, or an empty RSS sampler. The HTTP runner fails on invalid rates, socket errors, non-2xx responses, or shutdown and log failures |
+| kqueue defects were undocumented | [libxev_kqueue_findings.md](libxev_kqueue_findings.md) records the invalid-state and duplicate-completion investigation, measurements, and the pending XEV-003 and XEV-004 integration |
+
 ## Carried into 2.2.0
 
 - Quiet-host evidence for the v2.0.0 and v2.1.0 pipeline, WebSocket,
@@ -99,6 +112,11 @@ path or the shared-nothing ownership model.
   lsquic, and h1spec commits, plus the native Windows runtime gate
   ([ADR 0005](adr/0005-libxev-fork.md),
   [ADR 0006](adr/0006-dependency-forks.md), [policy](dependency_forks.md)).
+- Merge and pin libxev XEV-003 and XEV-004 from `farbenbuilds/libxev` PR #1.
+  The 2.1.6 scheduler workaround removes the kqueue timer spin, but the
+  duplicate-completion panic in the cluster signal-watcher test remains until
+  the fork commits are on `uwz/zig-0.16` and pinned in all dependency views;
+  see [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
 - lsquic and h1spec fork gate evidence: the maintained pins are recorded and
   `patches/` plus `vendor/lsquic_overlay` are removed; the HTTP/3 and h1spec
   compliance runs still need fresh artifacts.

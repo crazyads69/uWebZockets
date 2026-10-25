@@ -68,6 +68,7 @@ development certificates.
 | Request | `GET /` with no body, no query, no extra headers beyond h2load defaults |
 | Response | `200` with exact body `hello from a TLS worker group` |
 | Server build | `-Doptimize=ReleaseFast` |
+| Result schema | 2 (`SCHEMA_VERSION` in the environment file) |
 
 `h2load` is the generator because it is the tool the arena profile uses and it
 reports succeeded, failed, errored, and timeout counters separately.
@@ -85,8 +86,9 @@ A sample is successful only when all of these hold:
 - the server logs no panic or protocol error for the sample.
 
 The runner scans the cumulative server log after every sample and again after
-clean shutdown for panic, protocol-error (any spelling, including `ProtocolError`), or libxev
-`invalid state` text. Other warning lines remain in the artifact for review.
+clean shutdown for panic, protocol-error (any spelling, including
+`ProtocolError`), or libxev `invalid state` text. Other warning lines remain in
+the artifact for review.
 
 Any other outcome is reported as a failure and kept in the raw artifacts. A
 cohort is not summarized until three successful samples exist and the server

@@ -29,6 +29,11 @@ downstream fix must wait for an upstream release.
 - ADR 0001 is accepted for implementation in 2.2.0. The live listener remains
   capability-gated until the WebTransport compliance work lands; `SECURITY.md`
   keeps the current "not live" statement until then.
+- XEV-003 and XEV-004 are proposed in `farbenbuilds/libxev` PR #1 and are not
+  pinned. The 2.1.6 scheduler no longer depends on `.rearm`, but the kqueue
+  duplicate-completion panic remains until those commits are merged into
+  `uwz/zig-0.16`, reviewed, and pinned in all four dependency views. See
+  [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
 
 ## Mirror validation in CI
 

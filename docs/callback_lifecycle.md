@@ -118,10 +118,13 @@ on kqueue and IOCP instead of calling the backend directly.
   an overflow list and enter the wheel when they are within range.
 - `timer.Scheduler` (`src/core/timer.zig`) owns one persistent libxev timer
   per worker loop. It wakes on a bounded five-millisecond tick while deadlines
-  exist, advances the wheel, and cascades nodes. The completion is never reset
-  or reused. `stop` does not cancel; the bounded tick wakes once more and
+  exist, advances the wheel, and cascades nodes. Each tick disarms the completed
+  timer and arms a fresh relative tick with the same inline completion; it does
+  not return `.rearm`, because kqueue, epoll, and io_uring repeat the expired
+  absolute deadline. `stop` does not cancel; the bounded tick wakes once more and
   disarms after observing the stop flag. This avoids IOCP's queued-callback
-  race at the cost of a 5 ms tick when timers exist.
+  race at the cost of a 5 ms tick when timers exist. See
+  [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
 - `TcpConnection.touch_activity` arms the keep-alive deadline, or the
   incomplete-header deadline while a request head or body is partial. A
   connection with parked delayed responses suppresses the idle deadline.

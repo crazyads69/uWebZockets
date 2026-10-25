@@ -3,6 +3,75 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [2.1.6] - 2026-10-26
+
+Patch release that stops the timer scheduler from spinning on kqueue, keeps
+`TCP_NODELAY` best effort when the peer has already reset, and makes the HTTP
+and HTTP/2 benchmark harnesses fail on silent measurement gaps. Public APIs, C
+ABI layouts, capacities, wire formats, and TLS policy are unchanged.
+
+### Added
+
+- `docs/libxev_kqueue_findings.md` records the macOS kqueue investigation:
+  the timer `.rearm` spin, the libxev invalid-state and duplicate-completion
+  defects, the throughput and memory measurements, and the pending XEV-003 and
+  XEV-004 fork fixes.
+- The HTTP/2 harness records RSS sample count plus first, peak, and last RSS,
+  rejects a missing or truncated sampler, and keeps platform-specific CPU
+  observations in schema version 2.
+- The HTTP harness validates the `wrk` requests-per-second value, socket
+  errors, and non-2xx responses before accepting a sample.
+
+### Changed
+
+- `timer.Scheduler` disarms each completed tick and arms a fresh relative
+  five-millisecond timer. It no longer returns `.rearm`, which repeats the
+  expired absolute timeout on kqueue, epoll, and io_uring. A stopping scheduler
+  does not re-arm.
+- `tcp.set_nodelay` uses the raw `setsockopt` result as a best-effort operation
+  instead of routing `EINVAL` through `std.posix`, which treats it as
+  unreachable after a reset peer.
+- Both benchmark runners scan the cumulative server log after every sample and
+  after shutdown for panic, protocol-error, and libxev invalid-state text.
+  Shutdown now has a bounded `SIGTERM` wait, a `SIGKILL` fallback with
+  diagnostics, and an explicit exit-status check.
+- The HTTP/2 harness requires `TLS Protocol: TLSv1.3` for every TLS sample,
+  fails on exit status 143 from the signal-handling TLS cluster, validates
+  every parsed request counter, and probes readiness through the configured
+  URL instead of a hard-coded port.
+- `scripts/check_conventions.sh` uses one `awk` pass for the snake_case file
+  scan, avoiding a per-file shell loop on large trees.
+
+### Fixed
+
+- A kqueue server with a pending idle deadline no longer serves zero requests
+  per second because the scheduler repeatedly fired an already-expired absolute
+  timeout.
+- `set_nodelay` no longer traps during accept when the peer has already reset
+  the connection.
+- Missing `h2load` counters, invalid p99 values, a non-TLSv1.3 sample, a
+  truncated RSS sampler, `wrk` socket errors, and non-2xx responses can no
+  longer pass as successful benchmark samples.
+
+### Limits
+
+- libxev XEV-003 and XEV-004 remain proposed in `farbenbuilds/libxev` PR #1 and
+  are not pinned in this release. The timer workaround removes the scheduler
+  spin, but the kqueue duplicate-completion path can still panic the cluster
+  signal-watcher test until the fork fixes are merged and pinned.
+- The full committed HTTP/2 matrix, the plaintext-cluster control, a Linux
+  kqueue-equivalent A/B, Autobahn, and ASan/UBSan were not rerun for the
+  reported macOS measurements. The macOS runtime remains compile-checked in CI.
+- `hello_world` keeps the `128`-connection default; the 256- and
+  1,024-connection collapse recorded in the findings is a capacity limit, not
+  a scheduler bottleneck.
+
+### Security
+
+- No wire-protocol, TLS, certificate, authentication, or capacity behavior
+  changed. The timer fix removes a local availability stall; it does not widen
+  any parser or transport trust boundary.
+
 ## [2.1.5] - 2026-10-25
 
 API-hardening release for the thread-per-core manager. It makes cluster
