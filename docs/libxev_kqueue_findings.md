@@ -41,6 +41,17 @@ They are not merged, pinned, or claimed by 2.1.6. The cluster
 kqueue until the fork PR is reviewed, merged into `uwz/zig-0.16`, and pinned in
 all four dependency views under [dependency_forks.md](dependency_forks.md).
 
+## Timer timespec carry workaround
+
+libxev's `timer_next` adds the requested nanoseconds to the cached nanosecond
+field without carrying into seconds. An arm that lands in the last five
+milliseconds of a second can therefore become a roughly one-second wait on
+kqueue, epoll, io_uring, and IOCP. The 2.1.6 scheduler caps each relative arm
+inside the current second and resumes the normal cadence on the next tick. A
+fork patch that normalizes the timespec is a separate XEV-005 review; it is not
+part of the XEV-003 and XEV-004 proposal. Remove the scheduler guard when the
+pinned fork carries the nanoseconds itself.
+
 ## Upstream research (read-only; upstream is fetch-only for this project)
 
 Searched `mitchellh/libxev` for the exact log text and for kqueue rearm and
@@ -187,7 +198,7 @@ the libxev error and the server needed `SIGKILL`.
   Linux io_uring fails `scheduler advances at the next timer interval` and
   `does not rearm after a callback stops it`. The zero-request symptom was
   observed on macOS, while the expired-absolute-timeout mechanism is shared by
-  the kqueue, epoll, and io_uring timer implementations.
+  every libxev timer implementation.
 - A CPU hotspot profile of `tls_cluster` under load.
 - Landing the libxev change. Policy requires a `uwz(<area>)` patch commit on
   `farbenbuilds/libxev` branch `uwz/zig-0.16`, review, a full 40-hex pin, and

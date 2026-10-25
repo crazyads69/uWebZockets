@@ -119,7 +119,7 @@ try app.run();
 
 ## 6. Platforms
 
-| Supported | Linux and macOS on `x86_64` and `aarch64` | Built and cross-compiled by CI; Linux runs the runtime/sanitizer matrix, macOS is compile-checked |
+| Supported | Linux and macOS on `x86_64` and `aarch64` | Linux runs the hosted runtime/sanitizer matrix; the macOS test graph cross-compiles on demand, with no hosted kqueue runtime job |
 | Native Windows coverage | `x86_64-windows-gnu` | Compile gates plus a `windows-2025` runtime test job; official support follows a green run for the release commit |
 | Community | FreeBSD, NetBSD, OpenBSD, DragonFlyBSD | Share the build graph without dedicated CI |
 

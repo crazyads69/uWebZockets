@@ -477,9 +477,10 @@ in [`examples/`](examples/), with walkthroughs in
 
 ## Platform support
 
-- Supported: Linux and macOS on `x86_64` and `aarch64`; built and
-  cross-compiled by CI. Linux runs the runtime and sanitizer matrix; macOS is
-  compile-checked, with runtime coverage tracked in the roadmap.
+- Supported: Linux and macOS on `x86_64` and `aarch64`. Linux runs the hosted
+  runtime and sanitizer matrix; the macOS test graph cross-compiles on demand,
+  but no hosted macOS runner executes kqueue. Runtime coverage is tracked in
+  the roadmap.
 - Native Windows coverage: `x86_64-windows-gnu` now has compile gates plus a
   `windows-2025` runtime job. The 1.9.0 accept and queued-close fixes are
   recorded in

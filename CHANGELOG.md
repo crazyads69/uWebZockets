@@ -26,21 +26,37 @@ ABI layouts, capacities, wire formats, and TLS policy are unchanged.
 
 - `timer.Scheduler` disarms each completed tick and arms a fresh relative
   five-millisecond timer. It no longer returns `.rearm`, which repeats the
-  expired absolute timeout on kqueue, epoll, and io_uring. A stopping scheduler
-  does not re-arm.
+  expired absolute timeout on every timer backend. A stopping scheduler does
+  not re-arm. Each arm is kept inside the current second because the pinned
+  libxev does not carry timer nanoseconds into seconds; without that guard an
+  arm in the last five milliseconds of a second can become a roughly
+  one-second wait.
 - `tcp.set_nodelay` uses the raw `setsockopt` result as a best-effort operation
   instead of routing `EINVAL` through `std.posix`, which treats it as
-  unreachable after a reset peer.
-- Both benchmark runners scan the cumulative server log after every sample and
-  after shutdown for panic, protocol-error, and libxev invalid-state text.
-  Shutdown now has a bounded `SIGTERM` wait, a `SIGKILL` fallback with
-  diagnostics, and an explicit exit-status check.
-- The HTTP/2 harness requires `TLS Protocol: TLSv1.3` for every TLS sample,
-  fails on exit status 143 from the signal-handling TLS cluster, validates
-  every parsed request counter, and probes readiness through the configured
-  URL instead of a hard-coded port.
+  unreachable after a reset peer. `TCP_QUICKACK` and `TCP_DEFER_ACCEPT` share
+  the same best-effort helper.
+- `Scheduler.deinit` asserts that the driver drained, and `App.verify_shutdown`
+  reports `ShutdownIncomplete` while a scheduler is still active.
+- Both benchmark runners scan the cumulative server log after readiness, after
+  every sample, and after shutdown for panic, protocol-error, and libxev
+  invalid-state text. Shutdown now has a bounded `SIGTERM` wait, a `SIGKILL`
+  fallback with diagnostics, and an explicit exit-status check.
+- The HTTP/2 harness requires nghttp2 `h2load` 1.69.0 or newer, requires
+  `TLS Protocol: TLSv1.3` for every TLS sample, fails on exit status 143 from
+  the signal-handling TLS cluster, validates every parsed request counter, and
+  probes readiness through the configured URL instead of a hard-coded port.
+  The plaintext control verifies HTTP/2 with prior knowledge instead of h2c
+  Upgrade.
+- The HTTP/2 harness refuses an occupied target port, verifies that the
+  launched process owns the listening socket, records the per-cohort medians,
+  and writes a run-status sentinel that becomes `complete` only after the final
+  shutdown scan. Metadata records the observed and required descriptor limits,
+  the listener port and inspection tool, the resolved worker value and source,
+  and whether the measured tree was dirty. The HTTP harness writes the same
+  status and failure snapshot.
 - `scripts/check_conventions.sh` uses one `awk` pass for the snake_case file
-  scan, avoiding a per-file shell loop on large trees.
+  scan, fails on ripgrep errors instead of treating them as no matches, and
+  requires a PCRE2-capable ripgrep.
 
 ### Fixed
 
@@ -59,9 +75,17 @@ ABI layouts, capacities, wire formats, and TLS policy are unchanged.
   are not pinned in this release. The timer workaround removes the scheduler
   spin, but the kqueue duplicate-completion path can still panic the cluster
   signal-watcher test until the fork fixes are merged and pinned.
-- The full committed HTTP/2 matrix, the plaintext-cluster control, a Linux
-  kqueue-equivalent A/B, Autobahn, and ASan/UBSan were not rerun for the
-  reported macOS measurements. The macOS runtime remains compile-checked in CI.
+- The full committed HTTP/2 matrix, a Linux kqueue-equivalent A/B, Autobahn,
+  and ASan/UBSan were not rerun for the reported macOS measurements. The macOS
+  test graph cross-compiles, but no hosted macOS runner executes kqueue, so the
+  release does not claim a green macOS runtime suite. The Linux harness path
+  and the plaintext control were exercised on a local host.
+- The HTTP/2 harness requires nghttp2 `h2load` 1.69.0 or newer because older
+  releases do not report p99 latency. Linux listener verification requires
+  `ss` or `lsof`; macOS requires `lsof`.
+- The scheduler-side second-boundary guard remains until the maintained libxev
+  fork normalizes timer timespecs. A fork patch for that carry is a separate
+  XEV-005 review, not part of the XEV-003 and XEV-004 proposal.
 - `hello_world` keeps the `128`-connection default; the 256- and
   1,024-connection collapse recorded in the findings is a capacity limit, not
   a scheduler bottleneck.

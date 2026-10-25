@@ -120,8 +120,8 @@ on kqueue and IOCP instead of calling the backend directly.
   per worker loop. It wakes on a bounded five-millisecond tick while deadlines
   exist, advances the wheel, and cascades nodes. Each tick disarms the completed
   timer and arms a fresh relative tick with the same inline completion; it does
-  not return `.rearm`, because kqueue, epoll, and io_uring repeat the expired
-  absolute deadline. `stop` does not cancel; the bounded tick wakes once more and
+  not return `.rearm`, because every timer backend repeats the expired absolute
+  deadline. `stop` does not cancel; the bounded tick wakes once more and
   disarms after observing the stop flag. This avoids IOCP's queued-callback
   race at the cost of a 5 ms tick when timers exist. See
   [libxev_kqueue_findings.md](libxev_kqueue_findings.md).

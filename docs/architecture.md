@@ -294,7 +294,7 @@ and tail latency hold up on lossy paths.
   deadlines exist. Keep-alive, incomplete-header, and deferred response
   deadlines share that timer; there is no periodic pool sweep. Each tick
   disarms the completed timer and arms a fresh relative tick; returning
-  `.rearm` repeats an expired absolute deadline on kqueue, epoll, and io_uring.
+  `.rearm` repeats an expired absolute deadline on every timer backend.
   The 5 ms tick is the safe cross-backend choice on IOCP, where resetting or
   canceling and reusing the same timer completion races queued callbacks.
   Shutdown lets the final tick disarm instead of canceling.

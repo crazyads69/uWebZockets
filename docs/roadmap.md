@@ -93,9 +93,9 @@ evidence fail closed without changing a public API or a wire format.
 
 | Boundary | Resolution |
 | --- | --- |
-| The expired timer deadline could starve the loop | `timer.Scheduler` disarms the completed timer and arms a fresh relative five-millisecond tick instead of returning `.rearm`; a stopping scheduler does not re-arm. The spin was observed on macOS kqueue and the mechanism is shared by every absolute-timer backend. The per-worker deadline wheel is unchanged |
+| The expired timer deadline could starve the loop | `timer.Scheduler` disarms the completed timer and arms a fresh relative five-millisecond tick instead of returning `.rearm`; a stopping scheduler does not re-arm. The spin was observed on macOS kqueue and the mechanism is shared by every absolute-timer backend. Each arm stays inside the current second until libxev normalizes timer timespecs. The per-worker deadline wheel is unchanged |
 | `set_nodelay` trapped after a reset peer | The raw `setsockopt` result is ignored as a documented best-effort operation, so Darwin `EINVAL` cannot reach the `std.posix` unreachable branch during accept |
-| Benchmark samples could pass with missing data | The HTTP/2 runner fails on missing request counters, invalid p99 values, non-TLSv1.3 samples, exit status 143 on the TLS cluster, or an empty RSS sampler. The HTTP runner fails on invalid rates, socket errors, non-2xx responses, or shutdown and log failures |
+| Benchmark samples could pass with missing data | The HTTP/2 runner fails on missing request counters, invalid p99 values, non-TLSv1.3 samples, exit status 143 on the TLS cluster, an empty RSS sampler, an occupied port, or a listener owned by another process. The HTTP runner fails on invalid rates, socket errors, non-2xx responses, or shutdown and log failures. Both write a completion sentinel; the HTTP/2 runner also persists cohort medians |
 | kqueue defects were undocumented | [libxev_kqueue_findings.md](libxev_kqueue_findings.md) records the invalid-state and duplicate-completion investigation, measurements, and the pending XEV-003 and XEV-004 integration |
 
 ## Carried into 2.2.0

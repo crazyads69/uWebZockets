@@ -32,8 +32,10 @@ downstream fix must wait for an upstream release.
 - XEV-003 and XEV-004 are proposed in `farbenbuilds/libxev` PR #1 and are not
   pinned. The 2.1.6 scheduler no longer depends on `.rearm`, but the kqueue
   duplicate-completion panic remains until those commits are merged into
-  `uwz/zig-0.16`, reviewed, and pinned in all four dependency views. See
-  [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
+  `uwz/zig-0.16`, reviewed, and pinned in all four dependency views. A separate
+  XEV-005 candidate would normalize timer timespec nanoseconds in the fork;
+  2.1.6 guards the second boundary in the scheduler until that review happens.
+  See [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
 
 ## Mirror validation in CI
 
