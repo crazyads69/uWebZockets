@@ -113,7 +113,7 @@ fn on_timer_cancel(
 ///
 /// The driving timer uses a bounded tick so a deadline scheduled after the
 /// current arm is noticed without resetting or canceling a live completion.
-/// Each tick arms a fresh relative timer after its completion is disarmed.
+/// Each tick disarms the completed completion and arms a fresh relative timer.
 /// It is loop-confined: every method except `current_time_ms` must run on the
 /// loop that owns the underlying completion.
 pub const Scheduler = struct {
@@ -122,7 +122,6 @@ pub const Scheduler = struct {
     completion: xev.Completion = .{},
     io: std.Io,
     loop: ?*xev.Loop = null,
-    armed_deadline_ms: u64 = 0,
     active: bool = false,
     stopping: bool = false,
 
@@ -195,12 +194,15 @@ pub const Scheduler = struct {
 
     /// Arms the one driving timer when deadlines exist.
     fn arm(self: *Scheduler) void {
-        if (self.stopping or self.active) return;
         const loop = self.loop orelse return;
+        self.arm_on(loop, &self.completion);
+    }
+
+    fn arm_on(self: *Scheduler, loop: *xev.Loop, completion: *xev.Completion) void {
+        if (self.stopping or self.active) return;
         if (self.wheel.next_deadline() == null) return;
         self.active = true;
-        self.armed_deadline_ms = self.wheel.next_deadline().?;
-        self.timer.run(loop, &self.completion, tick_ms, Scheduler, self, on_tick);
+        self.timer.run(loop, completion, tick_ms, Scheduler, self, on_tick);
     }
 
     fn on_tick(
@@ -220,13 +222,12 @@ pub const Scheduler = struct {
             return .disarm;
         }
         self.wheel.advance(self.current_time_ms());
-        if (self.stopping or self.wheel.next_deadline() == null) {
-            self.active = false;
-            return .disarm;
-        }
-        // `.rearm` repeats the expired absolute timeout on kqueue and spins.
-        self.timer.run(loop, completion, tick_ms, Scheduler, self, on_tick);
-        self.active = true;
+        // The timer completion is dead when its callback runs. Clear the active
+        // guard before reuse so a deadline scheduled during advance cannot arm
+        // a second completion, then arm the next relative tick once.
+        self.active = false;
+        if (self.stopping or self.wheel.next_deadline() == null) return .disarm;
+        self.arm_on(loop, completion);
         return .disarm;
     }
 };

@@ -133,12 +133,17 @@ test "core: scheduler advances at the next timer interval" {
     const first_tick = std.Io.Clock.now(.awake, std.testing.io).nanoseconds;
     try event_loop.xev_loop.run(.once);
     const second_tick = std.Io.Clock.now(.awake, std.testing.io).nanoseconds;
+    try std.testing.expect(scheduler.active);
 
     scheduler.stop(&event_loop);
     try event_loop.xev_loop.run(.until_done);
+    try std.testing.expect(!scheduler.active);
 
+    const interval_ns = second_tick - first_tick;
     const min_interval_ns = timer.tick_ms * std.time.ns_per_ms / 2;
-    try std.testing.expect(second_tick - first_tick >= min_interval_ns);
+    const max_interval_ns = std.time.ns_per_s;
+    try std.testing.expect(interval_ns >= min_interval_ns);
+    try std.testing.expect(interval_ns < max_interval_ns);
     try std.testing.expect(!fired);
 }
 
@@ -580,7 +585,7 @@ test "tcp: set_nodelay enables TCP_NODELAY on a socket" {
 }
 
 test "tcp: set_nodelay tolerates a reset peer" {
-    if (builtin.os.tag != .macos) return error.SkipZigTest;
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
 
     const listener_fd = std.c.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
     if (listener_fd < 0) return error.SkipZigTest;
