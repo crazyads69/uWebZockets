@@ -26,6 +26,21 @@ fail()
     exit 1
 }
 
+require_positive_integer()
+{
+    case "$2" in
+        '' | *[!0-9]*) fail "$1 must be a positive integer: $2" ;;
+    esac
+    [ "$2" -gt 0 ] || fail "$1 must be a positive integer: $2"
+}
+
+require_non_negative_integer()
+{
+    case "$2" in
+        '' | *[!0-9]*) fail "$1 must be a non-negative integer: $2" ;;
+    esac
+}
+
 case "$platform" in
     Linux | Darwin) ;;
     *) fail "benchmark platform is unsupported: $platform" ;;
@@ -122,15 +137,27 @@ if [ "$platform" = "Darwin" ] && ! command -v lsof >/dev/null 2>&1; then
     fail "lsof is required to verify the selected Darwin backend"
 fi
 
+require_positive_integer H2LOAD_THREADS "$H2LOAD_THREADS"
+require_positive_integer H2LOAD_REQUESTS "$H2LOAD_REQUESTS"
+require_positive_integer H2LOAD_DURATION_SECONDS "$H2LOAD_DURATION_SECONDS"
+require_non_negative_integer H2LOAD_WARMUP_SECONDS "$H2LOAD_WARMUP_SECONDS"
+require_positive_integer H2LOAD_SAMPLES "$H2LOAD_SAMPLES"
+[ -n "$H2LOAD_CONNECTIONS" ] || fail "H2LOAD_CONNECTIONS must not be empty"
+[ -n "$H2LOAD_STREAMS" ] || fail "H2LOAD_STREAMS must not be empty"
+for connections in $H2LOAD_CONNECTIONS; do
+    require_positive_integer "H2LOAD_CONNECTIONS entry" "$connections"
+done
+for streams in $H2LOAD_STREAMS; do
+    require_positive_integer "H2LOAD_STREAMS entry" "$streams"
+done
+
 peak_connections=0
 for connections in $H2LOAD_CONNECTIONS; do
     if [ "$connections" -gt "$peak_connections" ]; then
         peak_connections=$connections
     fi
 done
-case "$max_clients" in
-    '' | *[!0-9]*) fail "UWZ_MAX_CLIENTS must be a positive integer: $max_clients" ;;
-esac
+require_positive_integer UWZ_MAX_CLIENTS "$max_clients"
 if [ "$max_clients" -lt "$peak_connections" ]; then
     fail "UWZ_MAX_CLIENTS=$max_clients is below the peak connection level $peak_connections"
 fi
@@ -439,6 +466,7 @@ if [ "$ready" != true ]; then
     record_failure
     fail "benchmark server did not become ready"
 fi
+check_server_log readiness
 
 if ! backend=$(detect_backend); then
     record_failure
@@ -582,6 +610,12 @@ for connections in $H2LOAD_CONNECTIONS; do
                 record_failure
                 fail "h2load summary could not be parsed"
             fi
+            if ! awk -v rate="$rate" 'BEGIN {
+                exit !(rate ~ /^[0-9]+([.][0-9]+)?$/ && rate + 0 > 0)
+            }'; then
+                record_failure
+                fail "$cohort sample $sample reported an invalid request rate: $rate"
+            fi
             if [ "$mode" != "plaintext-cluster" ] && [ "$tls_protocol" != "TLSv1.3" ]; then
                 record_failure
                 fail "$cohort sample $sample negotiated TLS protocol '$tls_protocol' instead of TLSv1.3"
@@ -641,6 +675,10 @@ if [ -z "$rss_summary" ]; then
     fail "resource sampler produced no RSS samples; see $cpu_file"
 fi
 set -- $rss_summary
+if [ "$3" -le 0 ]; then
+    record_failure
+    fail "resource sampler recorded a non-positive peak RSS; see $cpu_file"
+fi
 {
     printf 'rss_samples=%s\n' "$1"
     printf 'rss_first_kb=%s\n' "$2"

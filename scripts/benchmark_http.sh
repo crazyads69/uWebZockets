@@ -14,11 +14,28 @@ label=$1
 server_binary=$2
 output_directory=$3
 
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+require_positive_integer() {
+    case "$2" in
+        '' | *[!0-9]*) fail "$1 must be a positive integer: $2" ;;
+    esac
+    [ "$2" -gt 0 ] || fail "$1 must be a positive integer: $2"
+}
+
 case "$label" in
     '' | *[!a-z0-9_-]*)
         printf '%s\n' "benchmark label must contain only lowercase letters, digits, dashes, or underscores" >&2
         exit 2
         ;;
+esac
+
+case "$TARGET_URL" in
+    http://*) ;;
+    *) fail "TARGET_URL must use http://: $TARGET_URL" ;;
 esac
 
 if [ ! -x "$server_binary" ]; then
@@ -32,10 +49,6 @@ rates_file="$output_directory/$label-rates.txt"
 : >"$rates_file"
 
 server_pid=
-fail() {
-    printf '%s\n' "$1" >&2
-    exit 1
-}
 
 check_server_log() {
     check_stage=$1
@@ -116,6 +129,11 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+require_positive_integer WRK_THREADS "$WRK_THREADS"
+require_positive_integer WRK_CONNECTIONS "$WRK_CONNECTIONS"
+require_positive_integer WRK_DURATION_SECONDS "$WRK_DURATION_SECONDS"
+require_positive_integer WRK_SAMPLES "$WRK_SAMPLES"
+
 "$server_binary" >"$server_log" 2>&1 &
 server_pid=$!
 
@@ -150,6 +168,7 @@ if [ "$ready" != true ]; then
     printf '%s\n' "benchmark server did not become ready" >&2
     exit 1
 fi
+check_server_log readiness
 
 run=1
 while [ "$run" -le "$WRK_SAMPLES" ]; do
@@ -173,24 +192,28 @@ while [ "$run" -le "$WRK_SAMPLES" ]; do
         exit 1
     fi
     if ! awk '
+        BEGIN { seen = 0; failed = 0 }
         /Socket errors:/ {
+            seen = 1
             for (field = 4; field <= NF; field += 2) {
                 if ($field + 0 != 0) failed = 1
             }
         }
-        END { exit failed }
+        END { exit !(seen && !failed) }
     ' "$result_file"; then
-        printf '%s\n' "wrk reported socket errors" >&2
+        printf '%s\n' "wrk did not report a readable zero socket-error counter" >&2
         exit 1
     fi
     if ! awk '
+        BEGIN { seen = 0; failed = 0 }
         /^[[:space:]]*Non-2xx or 3xx responses:/ {
+            seen = 1
             responses = $NF
             if (responses !~ /^[0-9]+$/ || responses + 0 != 0) failed = 1
         }
-        END { exit failed }
+        END { exit !(seen && !failed) }
     ' "$result_file"; then
-        printf '%s\n' "wrk reported Non-2xx or 3xx responses" >&2
+        printf '%s\n' "wrk did not report a readable zero Non-2xx/3xx counter" >&2
         exit 1
     fi
     check_server_log "sample $run"
