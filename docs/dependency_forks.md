@@ -30,6 +30,25 @@ downstream fix must wait for an upstream release.
   capability-gated until the WebTransport compliance work lands; `SECURITY.md`
   keeps the current "not live" statement until then.
 
+## Mirror validation in CI
+
+`scripts/dependency_mirrors.env` records the reviewed commit of every mirror
+branch. Pull-request and `main` lint verify that the fork branch still equals
+that record. This keeps a code PR green when upstream advances; it does not
+hide a fork-only commit or a rewritten mirror.
+
+Exact live equality is required at release and by the weekly
+`Dependency Mirrors` workflow:
+
+```sh
+sh scripts/check_dependency_forks.sh --exact-mirrors
+```
+
+Both forms use `scripts/check_mirror_state.sh`. After a reviewed sync, update
+the matching value in `scripts/dependency_mirrors.env` in the same change that
+advances the fork mirror. Never update the record to match an unreviewed fork
+head.
+
 ## Upstream relationship
 
 Upstream repositories are fetch-only:
@@ -105,7 +124,8 @@ test "$(git rev-parse origin/main)" = "$(git rev-parse upstream/main)"
 
 For lsquic, replace `main` with `master` on both sides. Synchronize the mirror
 at least weekly, before every integration pin, and within 24 hours of an
-upstream security advisory or release.
+upstream security advisory or release. Update `scripts/dependency_mirrors.env`
+in the same reviewed change.
 
 A failed fast-forward means the mirror is no longer exact. Repair is sanctioned
 only as a recorded incident: after fresh fetches, run
@@ -213,7 +233,9 @@ Each mirror sync and integration merge is a supply-chain review:
   submodule, integration-branch ancestry, mirror equality, and absence of a
   local patch in the compliance workflow.
 - `scripts/check_dependency_forks.sh` runs all three checks in lint and release
-  gates.
+  gates. `--exact-mirrors` also requires the live upstream branch to match the
+  reviewed record; the release workflow and the weekly `Dependency Mirrors`
+  workflow use that form.
 - Before release, resolve each pinned commit from a second machine and against
   the retained archive or local bare mirror. Release and benchmark provenance
   record the fork commits and their upstream bases; tags are never

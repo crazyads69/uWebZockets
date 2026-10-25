@@ -220,8 +220,10 @@ checked-out submodule and retire H1S-001 only when upstream performs the same
 cleanup.
 
 `scripts/check_dependency_forks.sh` verifies the libxev, lsquic, and h1spec
-pins. Do not reintroduce `patches/`, `vendor/lsquic_overlay`, or a CI `patch`
-step for a maintained dependency.
+pins and their reviewed mirror record. Do not reintroduce `patches/`,
+`vendor/lsquic_overlay`, or a CI `patch` step for a maintained dependency. Use
+`--exact-mirrors` before a release tag; it requires every mirror to match its
+live upstream branch.
 
 For C/C++ package sources, retain immutable commits and Zig package hashes,
 native source lists, and static-library outputs. Keep lsquic's ls-qpack and

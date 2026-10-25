@@ -93,6 +93,9 @@ jobs:
           nix develop "path:." -c zig fmt --check build.zig build.zig.zon builds src examples tests fuzz
           nix develop "path:." -c sh scripts/check_conventions.sh
 
+      - name: Check dependency fork provenance
+        run: nix develop "path:." -c sh scripts/check_dependency_forks.sh --exact-mirrors
+
       - name: Run centralized tests
         run: nix develop "path:." -c zig build test --summary all
 

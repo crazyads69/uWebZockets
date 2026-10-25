@@ -17,6 +17,7 @@ it is not a proof that all memory or security defects are absent.
 | `h1spec_compliance.yml` | pushes and pull requests to `main`, manual | `h1spec Compliance` | HTTP/1.1 compliance |
 | `http3_compliance.yml` | pushes and pull requests to `main`, manual | `HTTP3 Compliance` | curl/ngtcp2 and aioquic HTTP/3 interoperability |
 | `benchmark.yml` | pull requests to `main`, nightly, manual | `Benchmarking` | HTTP throughput regression |
+| `dependency_mirrors.yml` | weekly, manual | `Linting` | Exact live equality of every maintained fork mirror |
 | `publish.yml` | `v*` tag push | `Publish` | Exact-tag verification and seven-target static-library release |
 
 Every workflow uses a GitHub environment so repository deployments and any
@@ -247,9 +248,12 @@ H1S-001 ([ADR 0005](docs/adr/0005-libxev-fork.md),
 CI verifies every pin with `scripts/check_dependency_forks.sh`, including the
 libxev and lsquic URL, revision, Zig hash, and Nix hash across all four views,
 the h1spec `.gitmodules` URL and gitlink, remote resolution of every full
-commit, integration-branch ancestry, and mirror equality. Branches, tags, and
-short SHAs are rejected. Regeneration alone is not proof because
-`scripts/update_zon_files.sh` can skip when zon2nix or nix is absent. Lint also
+commit, integration-branch ancestry, and the reviewed mirror record in
+`scripts/dependency_mirrors.env`. Branches, tags, and short SHAs are rejected.
+Exact live upstream equality runs in the release workflow and the weekly
+`Dependency Mirrors` workflow via `--exact-mirrors`. Regeneration alone is not
+proof because `scripts/update_zon_files.sh` can skip when zon2nix or nix is
+absent. Lint also
 runs the stale-phrase grep. Before release, resolve every pinned commit from a
 second machine and against the retained archive or local bare mirror. Release
 and benchmark provenance record the fork commits and their upstream bases;

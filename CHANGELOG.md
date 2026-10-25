@@ -67,6 +67,12 @@ There is no wire-protocol, TLS, capacity, or request-path change.
   replaced by the canonical `Response` methods. A failed best-effort write now
   aborts the TCP connection or HTTP/2/3 stream instead of leaving the request
   unanswered or appending a second response to a partial frame.
+- Dependency mirror validation now records the reviewed mirror commit in
+  `scripts/dependency_mirrors.env`. Pull-request lint checks the record;
+  release tags and the weekly `Dependency Mirrors` workflow require exact live
+  upstream equality. The lsquic mirror was fast-forwarded to
+  `555de41db3544706ffc3444d99f3d934295c70a0` after reviewing the two upstream
+  ClientHello and stream-write fixes.
 - lsquic and h1spec now use maintained downstream forks, following the libxev
   policy. `build.zig.zon` pins `farbenbuilds/lsquic` commit
   `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`, and the

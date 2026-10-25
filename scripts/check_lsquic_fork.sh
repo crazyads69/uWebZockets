@@ -2,7 +2,7 @@
 # Verify the lsquic dependency pin is a full fork commit and that every
 # dependency view agrees on the URL, revision, Zig package hash, and Nix hash.
 #
-# Usage: check_lsquic_fork.sh [--offline]
+# Usage: check_lsquic_fork.sh [--offline] [--exact-mirrors]
 #   --offline skips the remote resolution step; lint and release gates run the
 #   default online form.
 
@@ -18,11 +18,23 @@ fail()
 }
 
 offline=0
-if [ "${1:-}" = "--offline" ]; then
-    offline=1
-elif [ "$#" -ne 0 ]; then
-    fail "usage: $0 [--offline]"
+exact_mirrors=0
+for arg in "$@"; do
+    case "$arg" in
+        (--offline) offline=1 ;;
+        (--exact-mirrors) exact_mirrors=1 ;;
+        (*) fail "usage: $0 [--offline] [--exact-mirrors]" ;;
+    esac
+done
+if [ "$offline" -eq 1 ] && [ "$exact_mirrors" -eq 1 ]; then
+    fail "--offline cannot verify exact upstream mirror equality"
 fi
+mirror_mode=
+if [ "$exact_mirrors" -eq 1 ]; then
+    mirror_mode=--exact
+fi
+
+. "$script_dir/dependency_mirrors.env"
 
 zon_url=$(sed -n \
     's|^[[:space:]]*\.url = "\(git+https://github.com/farbenbuilds/lsquic#[0-9a-f]*\)",$|\1|p' \
@@ -110,14 +122,12 @@ if [ "$offline" -eq 0 ]; then
             fail "pinned lsquic revision is not on uwz/main"
     fi
 
-    fork_master=$(git ls-remote --exit-code https://github.com/farbenbuilds/lsquic \
-        refs/heads/master 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
-        fail "unable to resolve the fork mirror master"
-    upstream_master=$(git ls-remote --exit-code https://github.com/litespeedtech/lsquic \
-        refs/heads/master 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
-        fail "unable to resolve upstream lsquic master"
-    [ "$fork_master" = "$upstream_master" ] ||
-        fail "farbenbuilds/lsquic master is not an exact upstream mirror"
+    sh "$script_dir/check_mirror_state.sh" \
+        lsquic \
+        https://github.com/farbenbuilds/lsquic master \
+        https://github.com/litespeedtech/lsquic master \
+        "$lsquic_mirror" \
+        "$mirror_mode"
 fi
 
 printf '%s\n' "lsquic pin is a full fork commit and all four views agree"

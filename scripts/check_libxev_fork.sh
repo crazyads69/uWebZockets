@@ -2,7 +2,7 @@
 # Verify the libxev dependency pin is a full fork commit and that every
 # dependency view agrees on the URL, revision, Zig package hash, and Nix hash.
 #
-# Usage: check_libxev_fork.sh [--offline]
+# Usage: check_libxev_fork.sh [--offline] [--exact-mirrors]
 #   --offline skips the remote resolution step; lint and release gates run the
 #   default online form.
 
@@ -18,11 +18,23 @@ fail()
 }
 
 offline=0
-if [ "${1:-}" = "--offline" ]; then
-    offline=1
-elif [ "$#" -ne 0 ]; then
-    fail "usage: $0 [--offline]"
+exact_mirrors=0
+for arg in "$@"; do
+    case "$arg" in
+        (--offline) offline=1 ;;
+        (--exact-mirrors) exact_mirrors=1 ;;
+        (*) fail "usage: $0 [--offline] [--exact-mirrors]" ;;
+    esac
+done
+if [ "$offline" -eq 1 ] && [ "$exact_mirrors" -eq 1 ]; then
+    fail "--offline cannot verify exact upstream mirror equality"
 fi
+mirror_mode=
+if [ "$exact_mirrors" -eq 1 ]; then
+    mirror_mode=--exact
+fi
+
+. "$script_dir/dependency_mirrors.env"
 
 zon_url=$(sed -n \
     's|^[[:space:]]*\.url = "\(git+https://github.com/farbenbuilds/libxev#[0-9a-f]*\)",$|\1|p' \
@@ -84,22 +96,24 @@ if [ "$offline" -eq 0 ]; then
     git -C "$tmp_dir/repo" cat-file -e "$rev^{commit}" ||
         fail "pinned libxev revision is not a commit on farbenbuilds/libxev"
 
-    branch_tip=$(git ls-remote --exit-code https://github.com/farbenbuilds/libxev         refs/heads/uwz/zig-0.16 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
+    branch_tip=$(git ls-remote --exit-code https://github.com/farbenbuilds/libxev refs/heads/uwz/zig-0.16 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
         fail "unable to resolve the uwz/zig-0.16 integration branch"
     [ -n "$branch_tip" ] || fail "uwz/zig-0.16 has no tip"
     if [ "$branch_tip" != "$rev" ]; then
-        git -C "$tmp_dir/repo" fetch --quiet             https://github.com/farbenbuilds/libxev             refs/heads/uwz/zig-0.16:refs/heads/uwz 2>/dev/null ||
+        git -C "$tmp_dir/repo" fetch --quiet \
+            https://github.com/farbenbuilds/libxev \
+            refs/heads/uwz/zig-0.16:refs/heads/uwz 2>/dev/null ||
             fail "unable to fetch the uwz/zig-0.16 history"
         git -C "$tmp_dir/repo" merge-base --is-ancestor "$rev" refs/heads/uwz ||
             fail "pinned libxev revision is not on uwz/zig-0.16"
     fi
 
-    fork_main=$(git ls-remote --exit-code https://github.com/farbenbuilds/libxev         refs/heads/main 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
-        fail "unable to resolve the fork mirror main"
-    upstream_main=$(git ls-remote --exit-code https://github.com/mitchellh/libxev         refs/heads/main 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
-        fail "unable to resolve upstream main"
-    [ "$fork_main" = "$upstream_main" ] ||
-        fail "farbenbuilds/libxev main is not an exact upstream mirror"
+    sh "$script_dir/check_mirror_state.sh" \
+        libxev \
+        https://github.com/farbenbuilds/libxev main \
+        https://github.com/mitchellh/libxev main \
+        "$libxev_mirror" \
+        "$mirror_mode"
 fi
 
 stale_files="AGENTS.md CONTRIBUTE.md SKILL.md CODEBASE.md CI_CD_PIPELINE.md CODING_CONVENTION.md docs/architecture.md docs/deployment.md docs/roadmap.md docs/dependency_forks.md docs/callback_lifecycle.md docs/websocket.md docs/api.md docs/http.md docs/adr/0001-http3-datagram-and-webtransport.md docs/adr/0004-windows-iocp-accept-and-queued-close.md docs/adr/0005-libxev-fork.md docs/adr/0006-dependency-forks.md .opencode/agents/build_vendor.md .opencode/agents/transport_io.md .codex/agents/build_vendor.toml .codex/agents/transport_io.toml .github/PULL_REQUEST_TEMPLATE.md THIRD_PARTY_NOTICES.md"

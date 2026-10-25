@@ -425,8 +425,11 @@ XEV-002, and `farbenbuilds/lsquic` at
 LSQ-002. The h1spec submodule points at
 `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main` with H1S-001.
 `patches/` and `vendor/lsquic_overlay` are deleted;
-`scripts/check_dependency_forks.sh` checks all pins, dependency views, and
-remote commits. See [ADR 0005](docs/adr/0005-libxev-fork.md) and
+`scripts/check_dependency_forks.sh` checks all pins, dependency views, remote
+commits, and the reviewed mirror records in `scripts/dependency_mirrors.env`.
+`--exact-mirrors` additionally requires live upstream equality and runs on
+release tags and the weekly drift workflow. See
+[ADR 0005](docs/adr/0005-libxev-fork.md) and
 [ADR 0006](docs/adr/0006-dependency-forks.md).
 
 A downstream project can pin

@@ -88,7 +88,9 @@ The normative procedure, branch table, and patch ledger are in
 - `patches/` and `vendor/lsquic_overlay` disappear from the package and the
   build graph. `vendor/h1spec` remains as the single compliance submodule.
 - CI gains `scripts/check_dependency_forks.sh`, which runs the libxev, lsquic,
-  and h1spec provenance checks.
+  and h1spec provenance checks against `scripts/dependency_mirrors.env`.
+  Release tags and the weekly `Dependency Mirrors` workflow require exact live
+  upstream equality with `--exact-mirrors`.
 - ADR 0001 moves from deferred to accepted implementation. Live WebTransport
   activation remains gated by the v2.2.0 compliance work; the current
   `SECURITY.md` statement stays true until that work lands.

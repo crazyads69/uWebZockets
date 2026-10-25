@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Run the maintained-fork provenance checks for libxev, lsquic, and h1spec.
 #
-# Usage: check_dependency_forks.sh [--offline]
+# Usage: check_dependency_forks.sh [--offline] [--exact-mirrors]
 
 set -eu
 

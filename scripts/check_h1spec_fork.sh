@@ -2,7 +2,7 @@
 # Verify the h1spec compliance submodule is pinned to the maintained fork and
 # that the CI job no longer applies a local patch.
 #
-# Usage: check_h1spec_fork.sh [--offline]
+# Usage: check_h1spec_fork.sh [--offline] [--exact-mirrors]
 #   --offline skips the remote resolution step; lint and release gates run the
 #   default online form.
 
@@ -18,11 +18,23 @@ fail()
 }
 
 offline=0
-if [ "${1:-}" = "--offline" ]; then
-    offline=1
-elif [ "$#" -ne 0 ]; then
-    fail "usage: $0 [--offline]"
+exact_mirrors=0
+for arg in "$@"; do
+    case "$arg" in
+        (--offline) offline=1 ;;
+        (--exact-mirrors) exact_mirrors=1 ;;
+        (*) fail "usage: $0 [--offline] [--exact-mirrors]" ;;
+    esac
+done
+if [ "$offline" -eq 1 ] && [ "$exact_mirrors" -eq 1 ]; then
+    fail "--offline cannot verify exact upstream mirror equality"
 fi
+mirror_mode=
+if [ "$exact_mirrors" -eq 1 ]; then
+    mirror_mode=--exact
+fi
+
+. "$script_dir/dependency_mirrors.env"
 
 grep -Fq 'url = https://github.com/farbenbuilds/h1spec' .gitmodules ||
     fail ".gitmodules does not use the maintained h1spec fork"
@@ -68,14 +80,12 @@ if [ "$offline" -eq 0 ]; then
             fail "pinned h1spec revision is not on uwz/main"
     fi
 
-    fork_main=$(git ls-remote --exit-code https://github.com/farbenbuilds/h1spec \
-        refs/heads/main 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
-        fail "unable to resolve the h1spec fork mirror main"
-    upstream_main=$(git ls-remote --exit-code https://github.com/uNetworking/h1spec \
-        refs/heads/main 2>/dev/null | sed -n '1s/[[:space:]].*//p') ||
-        fail "unable to resolve upstream h1spec main"
-    [ "$fork_main" = "$upstream_main" ] ||
-        fail "farbenbuilds/h1spec main is not an exact upstream mirror"
+    sh "$script_dir/check_mirror_state.sh" \
+        h1spec \
+        https://github.com/farbenbuilds/h1spec main \
+        https://github.com/uNetworking/h1spec main \
+        "$h1spec_mirror" \
+        "$mirror_mode"
 fi
 
 printf '%s\n' "h1spec submodule is a full fork commit with no local patch"
