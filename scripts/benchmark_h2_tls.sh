@@ -46,6 +46,16 @@ case "$platform" in
     *) fail "benchmark platform is unsupported: $platform" ;;
 esac
 
+if [ "$platform" = "Darwin" ]; then
+    listener_tool=lsof
+elif command -v ss >/dev/null 2>&1; then
+    listener_tool=ss
+elif command -v lsof >/dev/null 2>&1; then
+    listener_tool=lsof
+else
+    fail "ss or lsof is required to verify the benchmark listener"
+fi
+
 case "$curl_insecure" in
     0 | 1) ;;
     *) fail "UWZ_CURL_INSECURE must be 0 or 1" ;;
@@ -53,10 +63,35 @@ esac
 
 sha256_file()
 {
+    [ -r "$1" ] || return 1
     if [ "$platform" = "Darwin" ]; then
         shasum -a 256 "$1" | awk '{print $1}'
     else
         sha256sum "$1" | awk '{print $1}'
+    fi
+}
+
+listener_lines()
+{
+    if [ "$listener_tool" = "ss" ]; then
+        ss -H -ltnp "sport = :$1" 2>/dev/null || true
+    else
+        lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null || true
+    fi
+}
+
+listener_present()
+{
+    listener_lines "$1" | grep -q .
+}
+
+listener_owned()
+{
+    if [ "$listener_tool" = "ss" ]; then
+        ss -H -ltnp "sport = :$target_port" 2>/dev/null | grep -Fq "pid=$server_pid,"
+    else
+        lsof -nP -iTCP:"$target_port" -sTCP:LISTEN -a -p "$server_pid" 2>/dev/null |
+            grep -q .
     fi
 }
 
@@ -121,12 +156,46 @@ if [ "$mode" = plaintext-cluster ]; then
     alpn_value=not_applicable
 fi
 
+case "$url" in
+    https://*) default_port=443 ;;
+    *) default_port=80 ;;
+esac
+authority=${url#*://}
+authority=${authority%%/*}
+case "$authority" in
+    \[*\]:*) target_port=${authority##*:} ;;
+    \[*\]) target_port=$default_port ;;
+    *:*) target_port=${authority##*:} ;;
+    *) target_port=$default_port ;;
+esac
+case "$target_port" in
+    '' | *[!0-9]*) fail "benchmark URL has an invalid port: $url" ;;
+esac
+if [ "$target_port" -lt 1 ] || [ "$target_port" -gt 65535 ]; then
+    fail "benchmark URL port is out of range: $target_port"
+fi
+
 if [ ! -x "$server_binary" ]; then
     fail "benchmark server is not executable: $server_binary"
 fi
 
 if ! command -v h2load >/dev/null 2>&1; then
     fail "h2load is required for the $BENCHMARK_ID contract"
+fi
+if ! h2load_version_line=$(h2load --version 2>&1 | head -n 1); then
+    fail "could not query the h2load version"
+fi
+h2load_version=$(printf '%s\n' "$h2load_version_line" |
+    sed -n 's#.*nghttp2/\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\).*#\1 \2 \3#p')
+[ -n "$h2load_version" ] ||
+    fail "could not parse the h2load version: $h2load_version_line"
+h2load_major=${h2load_version%% *}
+h2load_rest=${h2load_version#* }
+h2load_minor=${h2load_rest%% *}
+if [ "$h2load_major" -lt 1 ] ||
+    { [ "$h2load_major" -eq 1 ] && [ "$h2load_minor" -lt 69 ]; }
+then
+    fail "h2load nghttp2 1.69.0 or newer is required for p99 statistics: $h2load_version_line"
 fi
 
 if ! command -v curl >/dev/null 2>&1; then
@@ -142,6 +211,9 @@ require_positive_integer H2LOAD_REQUESTS "$H2LOAD_REQUESTS"
 require_positive_integer H2LOAD_DURATION_SECONDS "$H2LOAD_DURATION_SECONDS"
 require_non_negative_integer H2LOAD_WARMUP_SECONDS "$H2LOAD_WARMUP_SECONDS"
 require_positive_integer H2LOAD_SAMPLES "$H2LOAD_SAMPLES"
+if [ $((H2LOAD_SAMPLES % 2)) -eq 0 ]; then
+    fail "H2LOAD_SAMPLES must be odd so the median is a measured sample"
+fi
 [ -n "$H2LOAD_CONNECTIONS" ] || fail "H2LOAD_CONNECTIONS must not be empty"
 [ -n "$H2LOAD_STREAMS" ] || fail "H2LOAD_STREAMS must not be empty"
 for connections in $H2LOAD_CONNECTIONS; do
@@ -161,23 +233,23 @@ require_positive_integer UWZ_MAX_CLIENTS "$max_clients"
 if [ "$max_clients" -lt "$peak_connections" ]; then
     fail "UWZ_MAX_CLIENTS=$max_clients is below the peak connection level $peak_connections"
 fi
-fd_limit=$(ulimit -n)
-case "$fd_limit" in
-    unlimited) fd_limit=$((peak_connections + 128)) ;;
-    '' | *[!0-9]*) fail "open-file limit is not numeric: $fd_limit" ;;
-esac
-if [ "$fd_limit" -lt $((peak_connections + 128)) ]; then
-    fail "open-file limit $fd_limit cannot hold $peak_connections connections; raise ulimit -n"
-fi
-
 mkdir -p "$output_directory"
 metadata_file="$output_directory/${label}_metadata.txt"
 server_log="$output_directory/${label}_server.log"
 expected_body="$output_directory/${label}_expected_body.bin"
 cpu_file="$output_directory/${label}_cpu_rss.tsv"
 summary_file="$output_directory/${label}_summary.tsv"
+cohort_medians_file="$output_directory/${label}_cohort_medians.tsv"
+workers_file="$output_directory/${label}_workers.tsv"
+status_file="$output_directory/${label}_run.status"
 failure_file="$output_directory/${label}_failure.txt"
 : >"$failure_file"
+: >"$workers_file"
+printf 'cohort\tconnections\tstreams\tsample\trate\tsucceeded\tfailed\terrored\ttimeout\tnon_2xx\tmin\tmax\tmedian\tp95\tp99\tmean\tsd\n' \
+    >"$summary_file"
+printf 'cohort\trate_median\trate_min\trate_max\tp99_median_us\tp99_min_us\tp99_max_us\n' \
+    >"$cohort_medians_file"
+printf '%s\n' "in_progress" >"$status_file"
 cert_fingerprint=unknown
 if [ -n "${UWZ_TLS_CERT:-}" ] && command -v openssl >/dev/null 2>&1; then
     cert_fingerprint=$(openssl x509 -in "$UWZ_TLS_CERT" -noout -fingerprint -sha256 2>/dev/null |
@@ -186,9 +258,46 @@ if [ -n "${UWZ_TLS_CERT:-}" ] && command -v openssl >/dev/null 2>&1; then
 fi
 flake_hash=unknown
 if [ -f "$script_directory/../flake.lock" ]; then
-    flake_hash=$(sha256_file "$script_directory/../flake.lock")
+    flake_hash=$(sha256_file "$script_directory/../flake.lock" || true)
+    flake_hash=${flake_hash:-unknown}
 fi
-dependency_hash=$(sha256_file "$script_directory/../build.zig.zon")
+dependency_hash=$(sha256_file "$script_directory/../build.zig.zon" || true)
+dependency_hash=${dependency_hash:-unknown}
+
+required_fds=$((peak_connections + 128))
+fd_limit=$(ulimit -n)
+case "$fd_limit" in
+    unlimited) ;;
+    '' | *[!0-9]*) fail "open-file limit is not numeric: $fd_limit" ;;
+    *)
+        if [ "$fd_limit" -lt "$required_fds" ]; then
+            fail "open-file limit $fd_limit cannot hold $peak_connections connections; raise ulimit -n"
+        fi
+        ;;
+esac
+
+workers_value=unknown
+workers_source=default_runtime
+if [ "$mode" = "tls-single" ]; then
+    workers_value=1
+    workers_source=mode
+elif [ -n "${UWEBZOCKETS_WORKERS:-}" ]; then
+    workers_value=$UWEBZOCKETS_WORKERS
+    workers_source=UWEBZOCKETS_WORKERS
+elif [ -n "${UWZ_WORKERS:-}" ]; then
+    workers_value=$UWZ_WORKERS
+    workers_source=UWZ_WORKERS
+fi
+
+git_dirty=unknown
+if git_status=$(git -C "$script_directory/.." status --porcelain 2>/dev/null); then
+    if [ -n "$git_status" ]; then
+        git_dirty=yes
+    else
+        git_dirty=no
+    fi
+fi
+
 case "$platform" in
     Darwin)
         cpu_model=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || printf 'unknown')
@@ -203,7 +312,16 @@ case "$platform" in
         cpu_model=$(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo 2>/dev/null | head -n 1)
         cpu_model=${cpu_model:-unknown}
         logical_cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 'unknown')
-        physical_cores=$(lscpu -p=core,socket 2>/dev/null | sed '/^#/d' | sort -u | wc -l | tr -d ' ')
+        if command -v lscpu >/dev/null 2>&1; then
+            physical_cores=$(lscpu -p=core,socket 2>/dev/null |
+                sed '/^#/d' | sort -u | wc -l | tr -d ' ')
+            physical_cores=${physical_cores:-unknown}
+            if [ "$physical_cores" = "0" ]; then
+                physical_cores=unknown
+            fi
+        else
+            physical_cores=unknown
+        fi
         smt_state=$(cat /sys/devices/system/cpu/smt/active 2>/dev/null || printf 'unknown')
         cpu_governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || printf 'unknown')
         cpu_quota_value=$(cpu_quota)
@@ -219,7 +337,7 @@ esac
     printf 'server_binary=%s\n' "$server_binary"
     printf 'server_command=%s\n' "$server_binary"
     printf 'hostname=%s\n' "$(hostname 2>/dev/null || printf 'unknown')"
-    printf 'h2load_version=%s\n' "$(h2load --version 2>&1 | head -n 1)"
+    printf 'h2load_version=%s\n' "$h2load_version_line"
     printf 'h2load_extra_args=%s\n' "$extra_args"
     printf 'zig_version=%s\n' "$(zig version 2>/dev/null || printf 'unknown')"
     printf 'uname=%s\n' "$(uname -a 2>/dev/null || printf 'unknown')"
@@ -233,15 +351,20 @@ esac
     printf 'kernel=%s\n' "$(uname -r 2>/dev/null || printf 'unknown')"
     printf 'memlock_kb=%s\n' "$(ulimit -l 2>/dev/null || printf 'unknown')"
     printf 'open_files=%s\n' "$fd_limit"
+    printf 'open_files_required=%s\n' "$required_fds"
+    printf 'listener_port=%s\n' "$target_port"
+    printf 'listener_tool=%s\n' "$listener_tool"
     printf 'git_revision=%s\n' "$(git -C "$script_directory/.." rev-parse HEAD 2>/dev/null || printf 'unknown')"
     printf 'git_describe=%s\n' "$(git -C "$script_directory/.." describe --tags --always 2>/dev/null || printf 'unknown')"
+    printf 'git_dirty=%s\n' "$git_dirty"
     printf 'flake_lock_sha256=%s\n' "$flake_hash"
     printf 'dependency_manifest_sha256=%s\n' "$dependency_hash"
     printf 'tls_min_version=%s\n' "$TLS_MIN_VERSION"
     printf 'certificate_sha256=%s\n' "$cert_fingerprint"
     printf 'curl_insecure=%s\n' "$curl_insecure"
     printf 'alpn=%s\n' "$alpn_value"
-    printf 'workers=%s\n' "${UWZ_WORKERS:-4}"
+    printf 'workers=%s\n' "$workers_value"
+    printf 'workers_source=%s\n' "$workers_source"
     printf 'max_clients=%s\n' "$max_clients"
     printf 'cpu_affinity=%s\n' "${UWZ_CPU_AFFINITY:-1}"
     printf 'connections=%s\n' "$H2LOAD_CONNECTIONS"
@@ -438,6 +561,10 @@ shutdown_server()
     [ "$shutdown_status" -eq 0 ]
 }
 
+if listener_present "$target_port"; then
+    fail "TCP port $target_port already has a listener; refusing to benchmark a stale server"
+fi
+
 "$server_binary" >"$server_log" 2>&1 &
 server_pid=$!
 start_sampler
@@ -466,6 +593,10 @@ if [ "$ready" != true ]; then
     record_failure
     fail "benchmark server did not become ready"
 fi
+if ! listener_owned; then
+    record_failure
+    fail "server pid $server_pid does not own the listener on TCP port $target_port"
+fi
 check_server_log readiness
 
 if ! backend=$(detect_backend); then
@@ -483,10 +614,15 @@ curl_args=
 if [ "$mode" != "plaintext-cluster" ] && [ "$curl_insecure" = "1" ]; then
     curl_args=--insecure
 fi
+curl_http2_args=--http2
+if [ "$mode" = "plaintext-cluster" ]; then
+    # The clear listen path has no h2c Upgrade; use prior knowledge instead.
+    curl_http2_args=--http2-prior-knowledge
+fi
 body_file="$output_directory/${label}_body.bin"
 # shellcheck disable=SC2086
-if ! curl_http_version=$(curl --silent --show-error --fail $curl_args --http2 \
-    --output "$body_file" --write-out '%{http_version}' "$url"); then
+if ! curl_http_version=$(curl --silent --show-error --fail $curl_args \
+    "$curl_http2_args" --output "$body_file" --write-out '%{http_version}' "$url"); then
     record_failure
     fail "response body check failed"
 fi
@@ -502,7 +638,6 @@ if ! cmp -s "$body_file" "$expected_body"; then
     fail "response body does not match $H2LOAD_RESPONSE_BODY"
 fi
 
-printf 'cohort\tconnections\tstreams\tsample\trate\tsucceeded\tfailed\terrored\ttimeout\tnon_2xx\tmin\tmax\tmedian\tp95\tp99\tmean\tsd\n' >"$summary_file"
 cohort_medians=
 
 for connections in $H2LOAD_CONNECTIONS; do
@@ -658,6 +793,9 @@ for connections in $H2LOAD_CONNECTIONS; do
         median_p99=$(printf '%s\n' "$sorted_p99" | sed -n "${median_line}p")
         minimum_p99=$(printf '%s\n' "$sorted_p99" | sed -n '1p')
         maximum_p99=$(printf '%s\n' "$sorted_p99" | tail -n 1)
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$cohort" "$median" "$minimum_rate" "$maximum_rate" \
+            "$median_p99" "$minimum_p99" "$maximum_p99" >>"$cohort_medians_file"
         cohort_medians="${cohort_medians}${cohort} rate_median=${median} requests/s rate_range=${minimum_rate}-${maximum_rate} requests/s p99_median=${median_p99}us p99_range=${minimum_p99}-${maximum_p99}us
 "
     done
@@ -689,10 +827,13 @@ if ! shutdown_server; then
     fail "benchmark server did not shut down cleanly; see $failure_file"
 fi
 check_server_log shutdown
+printf 'server_log_shutdown=clean\n' >>"$metadata_file"
 printf '%s' "$cohort_medians"
 
 if [ -f "$server_log" ]; then
-    grep 'worker_accepts' "$server_log" >"$output_directory/${label}_workers.tsv" || true
+    grep 'worker_accepts' "$server_log" >"$workers_file" || true
 fi
 
+printf 'run_status=complete\n' >>"$metadata_file"
+printf '%s\n' "complete" >"$status_file"
 printf '%s\n' "benchmark artifacts written to $output_directory"

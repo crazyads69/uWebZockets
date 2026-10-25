@@ -43,10 +43,22 @@ if [ ! -x "$server_binary" ]; then
     exit 2
 fi
 
+if ! command -v wrk >/dev/null 2>&1; then
+    fail "wrk is required for the HTTP throughput contract"
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    fail "python3 is required for the HTTP readiness probe"
+fi
+
 mkdir -p "$output_directory"
 server_log="$output_directory/$label-server.log"
 rates_file="$output_directory/$label-rates.txt"
+failure_file="$output_directory/$label-failure.txt"
+status_file="$output_directory/$label-run.status"
 : >"$rates_file"
+: >"$failure_file"
+printf '%s\n' "in_progress" >"$status_file"
 
 server_pid=
 
@@ -56,15 +68,30 @@ check_server_log() {
         fail "benchmark server log is missing or unreadable during $check_stage"
     fi
     if matches=$(grep -Ein 'panic|protocol[ _-]*error|libxev.*invalid state' "$server_log"); then
+        record_failure
         printf 'server log contains a panic, protocol error, or libxev invalid state during %s:\n%s\n' \
             "$check_stage" "$matches" >&2
         exit 1
     else
         grep_status=$?
         if [ "$grep_status" -ne 1 ]; then
+            record_failure
             fail "server log scan failed during $check_stage (grep status $grep_status)"
         fi
     fi
+}
+
+record_failure()
+{
+    {
+        printf 'url=%s\n' "$TARGET_URL"
+        printf '%s\n' '--- server process ---'
+        if [ -n "${server_pid:-}" ]; then
+            ps -p "$server_pid" -o pid=,ppid=,state=,%cpu=,rss=,command= 2>/dev/null || true
+        fi
+        printf '%s\n' '--- server log tail ---'
+        tail -n 80 "$server_log" 2>/dev/null || true
+    } >>"$failure_file"
 }
 
 shutdown_server() {
@@ -133,6 +160,9 @@ require_positive_integer WRK_THREADS "$WRK_THREADS"
 require_positive_integer WRK_CONNECTIONS "$WRK_CONNECTIONS"
 require_positive_integer WRK_DURATION_SECONDS "$WRK_DURATION_SECONDS"
 require_positive_integer WRK_SAMPLES "$WRK_SAMPLES"
+if [ $((WRK_SAMPLES % 2)) -eq 0 ]; then
+    fail "WRK_SAMPLES must be odd so the median is a measured sample"
+fi
 
 "$server_binary" >"$server_log" 2>&1 &
 server_pid=$!
@@ -165,20 +195,25 @@ if response.status != 200:
 done
 
 if [ "$ready" != true ]; then
-    printf '%s\n' "benchmark server did not become ready" >&2
-    exit 1
+    record_failure
+    fail "benchmark server did not become ready"
 fi
 check_server_log readiness
 
 run=1
 while [ "$run" -le "$WRK_SAMPLES" ]; do
     result_file="$output_directory/$label-$run.txt"
-    wrk \
+    if ! wrk \
         -t"$WRK_THREADS" \
         -c"$WRK_CONNECTIONS" \
         -d"${WRK_DURATION_SECONDS}s" \
         --latency \
         "$TARGET_URL" >"$result_file"
+    then
+        cat "$result_file" >&2
+        record_failure
+        fail "wrk exited nonzero for sample $run"
+    fi
     cat "$result_file" >&2
     rate=$(awk '/Requests\/sec:/ { print $2 }' "$result_file")
     if [ -z "$rate" ]; then
@@ -192,28 +227,29 @@ while [ "$run" -le "$WRK_SAMPLES" ]; do
         exit 1
     fi
     if ! awk '
-        BEGIN { seen = 0; failed = 0 }
+        BEGIN { failed = 0 }
         /Socket errors:/ {
-            seen = 1
+            # wrk omits this line when every counter is zero.
+            if (NF < 8) failed = 1
             for (field = 4; field <= NF; field += 2) {
                 if ($field + 0 != 0) failed = 1
             }
         }
-        END { exit !(seen && !failed) }
+        END { exit failed }
     ' "$result_file"; then
-        printf '%s\n' "wrk did not report a readable zero socket-error counter" >&2
+        printf '%s\n' "wrk reported socket errors or a malformed socket-error line" >&2
         exit 1
     fi
     if ! awk '
-        BEGIN { seen = 0; failed = 0 }
+        BEGIN { failed = 0 }
         /^[[:space:]]*Non-2xx or 3xx responses:/ {
-            seen = 1
+            # wrk omits this line when the counter is zero.
             responses = $NF
             if (responses !~ /^[0-9]+$/ || responses + 0 != 0) failed = 1
         }
-        END { exit !(seen && !failed) }
+        END { exit failed }
     ' "$result_file"; then
-        printf '%s\n' "wrk did not report a readable zero Non-2xx/3xx counter" >&2
+        printf '%s\n' "wrk reported Non-2xx/3xx responses or a malformed counter" >&2
         exit 1
     fi
     check_server_log "sample $run"
@@ -225,6 +261,7 @@ if ! shutdown_server; then
     fail "benchmark server did not shut down cleanly"
 fi
 check_server_log shutdown
+printf '%s\n' "complete" >"$status_file"
 
 median_line=$((WRK_SAMPLES / 2 + 1))
 sort -n "$rates_file" | sed -n "${median_line}p"

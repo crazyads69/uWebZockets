@@ -56,4 +56,8 @@ scripts/benchmark_http.sh baseline /path/to/baseline/hello_world /tmp/results
 ```
 
 The scripts consume `http_throughput_v1.env` directly, so the executable load
-parameters and recorded contract cannot drift independently.
+parameters and recorded contract cannot drift independently. A sample is
+rejected when `wrk` omits or zeroes the requests-per-second value, reports a
+socket error or a non-2xx/3xx response, or leaves a malformed counter. The
+runner also scans the server log after readiness and shutdown, bounds both
+`SIGTERM` and `SIGKILL` shutdown waits, and requires `wrk` plus `python3`.
