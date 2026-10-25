@@ -32,13 +32,89 @@ rates_file="$output_directory/$label-rates.txt"
 : >"$rates_file"
 
 server_pid=
-cleanup() {
-    if [ -n "$server_pid" ]; then
-        kill "$server_pid" 2>/dev/null || true
-        wait "$server_pid" 2>/dev/null || true
+fail() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+check_server_log() {
+    check_stage=$1
+    if [ ! -f "$server_log" ] || [ ! -r "$server_log" ]; then
+        fail "benchmark server log is missing or unreadable during $check_stage"
+    fi
+    if matches=$(grep -Ein 'panic|protocol[ _-]*error|libxev.*invalid state' "$server_log"); then
+        printf 'server log contains a panic, protocol error, or libxev invalid state during %s:\n%s\n' \
+            "$check_stage" "$matches" >&2
+        exit 1
+    else
+        grep_status=$?
+        if [ "$grep_status" -ne 1 ]; then
+            fail "server log scan failed during $check_stage (grep status $grep_status)"
+        fi
     fi
 }
-trap cleanup EXIT INT TERM
+
+shutdown_server() {
+    shutdown_pid=$server_pid
+    kill -TERM "$shutdown_pid" 2>/dev/null || true
+    shutdown_attempt=0
+    while [ "$shutdown_attempt" -lt 10 ]; do
+        shutdown_state=$(ps -p "$shutdown_pid" -o stat= 2>/dev/null | tr -d '[:space:]')
+        case "$shutdown_state" in
+            '' | Z* | z*) break ;;
+        esac
+        sleep 1
+        shutdown_attempt=$((shutdown_attempt + 1))
+    done
+
+    shutdown_state=$(ps -p "$shutdown_pid" -o stat= 2>/dev/null | tr -d '[:space:]')
+    case "$shutdown_state" in
+        '' | Z* | z*) ;;
+        *)
+            printf '%s\n' "benchmark server did not stop after SIGTERM; sending SIGKILL" >&2
+            kill -KILL "$shutdown_pid" 2>/dev/null || true
+            shutdown_attempt=0
+            while [ "$shutdown_attempt" -lt 2 ]; do
+                shutdown_state=$(ps -p "$shutdown_pid" -o stat= 2>/dev/null | tr -d '[:space:]')
+                case "$shutdown_state" in
+                    '' | Z* | z*) break ;;
+                esac
+                sleep 1
+                shutdown_attempt=$((shutdown_attempt + 1))
+            done
+            shutdown_state=$(ps -p "$shutdown_pid" -o stat= 2>/dev/null | tr -d '[:space:]')
+            case "$shutdown_state" in
+                '' | Z* | z*) wait "$shutdown_pid" 2>/dev/null || true ;;
+                *) printf '%s\n' 'benchmark server remains alive after SIGKILL' >&2 ;;
+            esac
+            server_pid=
+            return 1
+            ;;
+    esac
+
+    if wait "$shutdown_pid"; then
+        shutdown_status=0
+    else
+        shutdown_status=$?
+    fi
+    server_pid=
+    case "$shutdown_status" in
+        0 | 143) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+cleanup() {
+    if [ -n "$server_pid" ]; then
+        if ! shutdown_server; then
+            printf '%s\n' "benchmark server did not shut down cleanly" >&2
+            exit 1
+        fi
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 "$server_binary" >"$server_log" 2>&1 &
 server_pid=$!
@@ -52,14 +128,17 @@ while [ "$attempt" -lt 100 ]; do
     fi
     if python3 -c '
 import http.client
-connection = http.client.HTTPConnection("127.0.0.1", 3000, timeout=0.5)
-connection.request("GET", "/", headers={"Connection": "close"})
+import sys
+import urllib.parse
+target = urllib.parse.urlsplit(sys.argv[1])
+connection = http.client.HTTPConnection(target.hostname, target.port or 80, timeout=0.5)
+connection.request("GET", target.path or "/", headers={"Connection": "close"})
 response = connection.getresponse()
 response.read()
 connection.close()
 if response.status != 200:
     raise SystemExit(1)
-' 2>/dev/null; then
+' "$TARGET_URL" 2>/dev/null; then
         ready=true
         break
     fi
@@ -87,13 +166,42 @@ while [ "$run" -le "$WRK_SAMPLES" ]; do
         printf '%s\n' "wrk did not report requests per second" >&2
         exit 1
     fi
+    if ! awk -v rate="$rate" 'BEGIN {
+        exit !(rate ~ /^[0-9]+([.][0-9]+)?$/ && rate + 0 > 0)
+    }'; then
+        printf 'wrk reported an invalid requests per second value: %s\n' "$rate" >&2
+        exit 1
+    fi
+    if ! awk '
+        /Socket errors:/ {
+            for (field = 4; field <= NF; field += 2) {
+                if ($field + 0 != 0) failed = 1
+            }
+        }
+        END { exit failed }
+    ' "$result_file"; then
+        printf '%s\n' "wrk reported socket errors" >&2
+        exit 1
+    fi
+    if ! awk '
+        /^[[:space:]]*Non-2xx or 3xx responses:/ {
+            responses = $NF
+            if (responses !~ /^[0-9]+$/ || responses + 0 != 0) failed = 1
+        }
+        END { exit failed }
+    ' "$result_file"; then
+        printf '%s\n' "wrk reported Non-2xx or 3xx responses" >&2
+        exit 1
+    fi
+    check_server_log "sample $run"
     printf '%s\n' "$rate" >>"$rates_file"
     run=$((run + 1))
 done
 
-kill "$server_pid" 2>/dev/null || true
-wait "$server_pid" 2>/dev/null || true
-server_pid=
+if ! shutdown_server; then
+    fail "benchmark server did not shut down cleanly"
+fi
+check_server_log shutdown
 
 median_line=$((WRK_SAMPLES / 2 + 1))
 sort -n "$rates_file" | sed -n "${median_line}p"

@@ -10,20 +10,15 @@ failed=0
 
 bad_files=$(
     rg --files .github builds src examples tests scripts fuzz oss-fuzz benchmarks include misc |
-        while IFS= read -r file; do
-            base=${file##*/}
-            case "$base" in
-                build.zig | build.zig.zon | *.schema.json | CODE_OF_CONDUCT.md | COMMIT_CONVENTION.md | Dockerfile | FUNDING.yml | PULL_REQUEST_TEMPLATE.md | README.md | uWebZockets.h)
-                    continue
-                    ;;
-            esac
-            stem=${base%.*}
-            case "$stem" in
-                *[!a-z0-9_]*)
-                    printf '%s\n' "$file"
-                    ;;
-            esac
-        done
+        awk -F/ '
+            {
+                base = $NF
+                if (base == "build.zig" || base == "build.zig.zon" || base ~ /\.schema\.json$/ || base == "CODE_OF_CONDUCT.md" || base == "COMMIT_CONVENTION.md" || base == "Dockerfile" || base == "FUNDING.yml" || base == "PULL_REQUEST_TEMPLATE.md" || base == "README.md" || base == "uWebZockets.h") next
+                stem = base
+                sub(/\.[^.]*$/, "", stem)
+                if (stem ~ /[^a-z0-9_]/) print
+            }
+        '
 )
 
 if [ -n "$bad_files" ]; then

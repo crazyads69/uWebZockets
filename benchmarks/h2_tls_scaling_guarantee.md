@@ -18,6 +18,13 @@ cluster. It is a characterization and regression baseline, not a competitive
 claim: results are only comparable within one host, kernel, toolchain, and
 backend cohort.
 
+The current runner supports Linux and macOS. It forces h2load to negotiate
+`h2`; the server TLS context pins TLS 1.3. On Linux, the CPU sampler records
+cumulative process CPU seconds. On macOS, it records `ps` CPU percent as a
+decaying average over up to a minute. Both record RSS in KiB; the TSV column
+names keep these observations distinct. Native macOS results are a separate
+host/backend cohort and must not be compared with Linux results.
+
 ## Cohorts
 
 Every run builds a server at `-Doptimize=ReleaseFast` and runs one of three
@@ -71,27 +78,47 @@ A sample is successful only when all of these hold:
 
 - `failed == 0`, `errored == 0`, and `timeout == 0` in the `h2load` summary;
 - every reported status code is `2xx`;
+- every `h2load` request counter and the TLS protocol line were parsed; a
+  missing counter fails the sample instead of passing silently;
+- `h2load` reports `TLS Protocol: TLSv1.3` for every TLS sample;
 - a separate `GET /` returns the exact response body above over TLS;
 - the server logs no panic or protocol error for the sample.
 
+The runner scans the cumulative server log after every sample and again after
+clean shutdown for panic, protocol-error (any spelling, including `ProtocolError`), or libxev
+`invalid state` text. Other warning lines remain in the artifact for review.
+
 Any other outcome is reported as a failure and kept in the raw artifacts. A
-cohort is not summarized until three successful samples exist; the reported
-statistic is the median requests per second and the median p99 latency of those
-samples, with minimum and maximum spread.
+cohort is not summarized until three successful samples exist and the server
+exits with status 0 after `SIGTERM`. A server that dies from the signal's
+default action (status 143) did not run its graceful shutdown and fails the
+run. If it does not exit within ten seconds, the
+runner saves platform-specific process, descriptor, and log diagnostics; on
+macOS it also saves a thread sample when `sample` is available. It then sends
+`SIGKILL` and polls for up to two more seconds. If the process still appears
+alive, the runner records that state and exits without an unbounded wait. The
+reported statistics are median requests per second and median p99 latency,
+with minimum and maximum spread for both. A process stuck in an uninterruptible
+kernel state can outlive the runner until the kernel completes the pending kill.
 
 ## Required per-run evidence
 
 Each recorded run stores:
 
 - date and time, hostname, CPU model, core count and quota, kernel, memlock
-  limit, and whether a backend fallback to epoll occurred;
+  limit, selected backend, and backend fallback status when exposed by the
+  loop; dynamic Linux builds currently report fallback status as
+  `not_exposed`, while macOS kqueue reports `not_applicable_static_backend`;
 - the exact uWebZockets commit or tag, Zig version, dependency pins, and
   `flake.lock` hash;
 - the server command line, the generator version and flags, the connection and
   stream levels, and the output directory;
 - the raw `h2load` output for every sample plus the parsed counters;
 - the generator's requests per second, succeeded/failed/errored/timeout
-  counters, p50/p75/p90/p99 latency, and the server CPU and RSS observations.
+  counters, per-sample minimum/median/p95/p99/maximum latency, and the server
+  CPU and RSS observations, including the sample count and the first, peak,
+  and last RSS in the metadata file. The first RSS sample can be taken before
+  the server has finished starting and is not a baseline.
 
 Never edit generated benchmark output by hand, and never combine numbers from
 different systems into one ratio.
@@ -112,6 +139,12 @@ scripts/benchmark_h2_tls.sh tls_cluster ./zig-out/bin/tls_cluster \
     /tmp/h2-results https://127.0.0.1:8443/
 ```
 
+On macOS, use Zig 0.16.0, `h2load`, `curl`, and a local CA-signed PEM
+certificate with `SSL_CERT_FILE` set to that CA. The runner records the native
+backend and available CPU provenance, but CPU quota and governor are not
+exposed for a native host; those fields say so explicitly. Use a new output
+directory for each host cohort.
+
 The script consumes `h2_tls_scaling_v1.env` directly, so the executable
 parameters and the recorded contract cannot drift independently. It refuses to
 run without `h2load` or real PEM credentials, requires `UWZ_MAX_CLIENTS` to
@@ -119,9 +152,16 @@ exceed the peak connection level, and records a failure when any sample reports
 a non-zero failure counter. It starts the server itself, samples CPU and RSS,
 detects the selected backend from the process descriptors, records per-worker
 accept counts, and preserves the raw `h2load` output plus a failure snapshot.
+On shutdown timeout, Linux diagnostics include `/proc/PID/status`, socket
+states, and the server log tail. macOS diagnostics include process information,
+open descriptors, the server log tail, and a one-second `sample` report when
+available. The loop currently does not expose a runtime flag proving whether
+an epoll selection followed an io_uring initialization failure.
 Pass the URL as the fourth argument to use a non-default port or the plaintext
 control. Set `UWZ_CURL_INSECURE=1` only when the local CA cannot be passed to
-curl; the recorded metadata notes the choice.
+curl; the recorded metadata notes the choice. The runner refuses an unknown
+backend and keeps platform-specific CPU observations in the schema-version-2
+sampler TSV.
 
 ## Committed artifact policy
 
