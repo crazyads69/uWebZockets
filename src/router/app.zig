@@ -635,6 +635,9 @@ pub fn configured_app_with_route_params(
 
         fn verify_shutdown(self: *const Self) !void {
             if (self.pool.count_active() != 0) return error.ShutdownIncomplete;
+            if (self.scheduler) |*scheduler| {
+                if (scheduler.active) return error.ShutdownIncomplete;
+            }
             if (self.watcher) |*watch| {
                 if (!watch.is_drained()) return error.ShutdownIncomplete;
             }

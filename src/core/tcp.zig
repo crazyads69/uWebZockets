@@ -2373,19 +2373,33 @@ pub fn set_receive_timeout(fd: SocketFd, milliseconds: u32) !void {
 /// Descriptor type libxev exposes for TCP and UDP handles on this platform.
 pub const SocketFd = if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.posix.fd_t;
 
+/// Applies a POSIX integer socket option without trapping on a vanished peer.
+///
+/// `std.posix.setsockopt` maps `EBADF`, `EINVAL`, and `ENOTSOCK` to
+/// `unreachable`, so a `catch` cannot make these options best effort. The raw
+/// result is ignored; a kernel without the option keeps its default policy.
+fn set_socket_option_best_effort(fd: SocketFd, level: i32, option: u32, value: c_int) void {
+    _ = std.posix.system.setsockopt(
+        fd,
+        level,
+        option,
+        &std.mem.toBytes(value),
+        @sizeOf(c_int),
+    );
+}
+
 /// Defers accepts until the first application byte arrives.
 ///
 /// Linux-only; other kernels keep their default accept policy, so a handshake
 /// that stalls still occupies a kernel backlog entry instead of a worker slot.
 fn apply_listener_tuning(fd: SocketFd) void {
     if (builtin.os.tag == .linux) {
-        // Best effort: a kernel without TCP_DEFER_ACCEPT keeps the default policy.
-        std.posix.setsockopt(
+        set_socket_option_best_effort(
             fd,
             std.posix.IPPROTO.TCP,
             std.os.linux.TCP.DEFER_ACCEPT,
-            &std.mem.toBytes(defer_accept_seconds),
-        ) catch {};
+            defer_accept_seconds,
+        );
     }
 }
 
@@ -2398,12 +2412,12 @@ fn apply_listener_tuning(fd: SocketFd) void {
 pub fn request_quickack(fd: SocketFd) void {
     if (builtin.os.tag == .linux) {
         // Best effort: a kernel without TCP_QUICKACK keeps delayed ACKs.
-        std.posix.setsockopt(
+        set_socket_option_best_effort(
             fd,
             std.posix.IPPROTO.TCP,
             std.os.linux.TCP.QUICKACK,
-            &std.mem.toBytes(@as(c_int, 1)),
-        ) catch {};
+            1,
+        );
     }
 }
 
@@ -2416,13 +2430,12 @@ pub fn set_nodelay(fd: SocketFd) void {
     if (builtin.os.tag == .linux or builtin.os.tag == .macos or
         builtin.os.tag == .ios)
     {
-        // A peer reset can make TCP_NODELAY return EINVAL after accept.
-        _ = std.posix.system.setsockopt(
+        // macOS can return EINVAL for TCP_NODELAY after the peer resets.
+        set_socket_option_best_effort(
             fd,
             std.posix.IPPROTO.TCP,
             std.posix.TCP.NODELAY,
-            &std.mem.toBytes(@as(c_int, 1)),
-            @sizeOf(c_int),
+            1,
         );
     }
 }

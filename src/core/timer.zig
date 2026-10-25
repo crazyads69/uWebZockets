@@ -137,6 +137,7 @@ pub const Scheduler = struct {
 
     /// Releases the libxev timer after `stop` has drained the loop.
     pub fn deinit(self: *Scheduler) void {
+        std.debug.assert(!self.active);
         self.timer.deinit();
     }
 
@@ -188,8 +189,8 @@ pub const Scheduler = struct {
         self.stopping = true;
         self.loop = loop.get_xev_loop();
         // The driving timer is not canceled. It wakes on its bounded tick and
-        // returns .disarm after observing `stopping`, which avoids IOCP's
-        // queued-cancel completion race without delaying shutdown.
+        // disarms after observing `stopping`; shutdown waits at most one tick.
+        // This avoids IOCP's queued-cancel completion race.
     }
 
     /// Arms the one driving timer when deadlines exist.
@@ -199,10 +200,15 @@ pub const Scheduler = struct {
     }
 
     fn arm_on(self: *Scheduler, loop: *xev.Loop, completion: *xev.Completion) void {
+        std.debug.assert(completion == &self.completion);
         if (self.stopping or self.active) return;
         if (self.wheel.next_deadline() == null) return;
         self.active = true;
-        self.timer.run(loop, completion, tick_ms, Scheduler, self, on_tick);
+        const now_ns: u64 = @intCast(@max(
+            std.Io.Clock.now(.awake, self.io).nanoseconds,
+            0,
+        ));
+        self.timer.run(loop, completion, tick_delay_ms(now_ns), Scheduler, self, on_tick);
     }
 
     fn on_tick(
@@ -249,6 +255,20 @@ pub fn sleep(
 /// re-arm can outrun the submission queue, while staying below a scheduler
 /// quantum for connection deadlines and parked `/delay` responses.
 pub const tick_ms: u64 = 5;
+
+/// Returns a tick delay that does not cross a libxev timespec second.
+///
+/// libxev adds the delay to the cached nanosecond field without carrying into
+/// seconds. An arm in the last five milliseconds of a second can therefore
+/// become a roughly one-second wait. Keep each arm inside the current second;
+/// the next tick resumes the normal cadence. Remove this when the maintained
+/// fork normalizes the timer timespec.
+pub fn tick_delay_ms(now_ns: u64) u64 {
+    const nsec = now_ns % std.time.ns_per_s;
+    const remaining_ms = (std.time.ns_per_s - nsec) / std.time.ns_per_ms;
+    if (remaining_ms <= 1) return 0;
+    return @min(tick_ms, remaining_ms - 1);
+}
 
 fn current_ms(io: std.Io) u64 {
     const now = std.Io.Clock.now(.awake, io);
