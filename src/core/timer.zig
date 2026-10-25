@@ -113,7 +113,7 @@ fn on_timer_cancel(
 ///
 /// The driving timer uses a bounded tick so a deadline scheduled after the
 /// current arm is noticed without resetting or canceling a live completion.
-/// Repeating ticks use the backend's `.rearm` action, never a nested `run`.
+/// Each tick arms a fresh relative timer after its completion is disarmed.
 /// It is loop-confined: every method except `current_time_ms` must run on the
 /// loop that owns the underlying completion.
 pub const Scheduler = struct {
@@ -205,8 +205,8 @@ pub const Scheduler = struct {
 
     fn on_tick(
         user_data: ?*Scheduler,
-        _: *xev.Loop,
-        _: *xev.Completion,
+        loop: *xev.Loop,
+        completion: *xev.Completion,
         result: anyerror!void,
     ) xev.CallbackAction {
         const self = user_data.?;
@@ -220,13 +220,14 @@ pub const Scheduler = struct {
             return .disarm;
         }
         self.wheel.advance(self.current_time_ms());
-        if (self.wheel.next_deadline() == null) {
+        if (self.stopping or self.wheel.next_deadline() == null) {
             self.active = false;
             return .disarm;
         }
-        // Re-arm through the backend so a new timer is never queued from
-        // inside its own completion callback.
-        return .rearm;
+        // `.rearm` repeats the expired absolute timeout on kqueue and spins.
+        self.timer.run(loop, completion, tick_ms, Scheduler, self, on_tick);
+        self.active = true;
+        return .disarm;
     }
 };
 

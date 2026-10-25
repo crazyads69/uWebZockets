@@ -2416,13 +2416,14 @@ pub fn set_nodelay(fd: SocketFd) void {
     if (builtin.os.tag == .linux or builtin.os.tag == .macos or
         builtin.os.tag == .ios)
     {
-        // Best effort: a kernel without TCP_NODELAY keeps Nagle enabled.
-        std.posix.setsockopt(
+        // A peer reset can make TCP_NODELAY return EINVAL after accept.
+        _ = std.posix.system.setsockopt(
             fd,
             std.posix.IPPROTO.TCP,
             std.posix.TCP.NODELAY,
             &std.mem.toBytes(@as(c_int, 1)),
-        ) catch {};
+            @sizeOf(c_int),
+        );
     }
 }
 
