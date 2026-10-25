@@ -1,7 +1,7 @@
 # libxev kqueue findings: invalid submission state and duplicate queueing
 
-Status: the scheduler workaround shipped in 2.1.6; the libxev fixes are
-proposed but not yet landed in `farbenbuilds/libxev`.
+Status: the scheduler workaround shipped in 2.1.6; XEV-003, XEV-004, and
+XEV-005 are merged into `farbenbuilds/libxev` and pinned by 2.1.6.
 Date of measurements: 2026-10-25. Host: macOS 26 (Darwin 25.0.0), arm64,
 Zig 0.16.0, `wrk` and `h2load 1.70.0` on the same host as the server. The host
 was under load during the runs (load average about 9.7, headless Chromium and
@@ -9,7 +9,8 @@ an endpoint-security daemon), so absolute throughput is lower than an idle
 machine and only A/B comparisons taken in the same session are meaningful.
 
 Pinned dependency under test: libxev `cbf01bc432a84cd91a99c1cb1031b46416d044c7`
-(`uwz/zig-0.16`, XEV-001 and XEV-002).
+(`uwz/zig-0.16`, XEV-001 and XEV-002). The 2.1.6 pin is
+`c49f6dfb83038c146232472c063e4b2681d098d8`, which adds XEV-003 through XEV-005.
 
 ## Summary
 
@@ -28,17 +29,18 @@ completed timer and arms a fresh relative five-millisecond timer, and a
 stopping scheduler does not re-arm. This removes the kqueue spin without
 depending on a new libxev pin.
 
-The fork fixes remain proposed in
-<https://github.com/farbenbuilds/libxev/pull/1> on branch
-`fix/kqueue-active-completion-requeue`, based on
+The fork fixes are merged through
+<https://github.com/farbenbuilds/libxev/pull/1> at
+`c49f6dfb83038c146232472c063e4b2681d098d8`, based on
 `cbf01bc432a84cd91a99c1cb1031b46416d044c7`:
 
 - XEV-003, keep a rearmed completion active after `submit()` reported it.
 - XEV-004, queue a still-readable completion once before `perform()`.
+- XEV-005, guard nested submits in both dispatch loops, flush staged deletes
+  from `no_wait`, and balance `EV_ERROR`/non-kqueue rearm accounting.
 
-They are not merged, pinned, or claimed by 2.1.6. The cluster
-`programmatic shutdown drains the signal watcher` panic therefore remains on
-kqueue until the fork PR is reviewed, merged into `uwz/zig-0.16`, and pinned in
+The exact XEV-005 tree passed 65/65 macOS arm64 kqueue tests in Debug and
+ReleaseSafe and 142/146 Linux tests (4 skipped). 2.1.6 pins the merge commit in
 all four dependency views under [dependency_forks.md](dependency_forks.md).
 
 ## Timer timespec carry workaround
@@ -48,9 +50,9 @@ field without carrying into seconds. An arm that lands in the last five
 milliseconds of a second can therefore become a roughly one-second wait on
 kqueue, epoll, io_uring, and IOCP. The 2.1.6 scheduler caps each relative arm
 inside the current second and resumes the normal cadence on the next tick. A
-fork patch that normalizes the timespec is a separate XEV-005 review; it is not
-part of the XEV-003 and XEV-004 proposal. Remove the scheduler guard when the
-pinned fork carries the nanoseconds itself.
+fork patch that normalizes the timespec is a separate XEV-006 candidate; it is
+not part of XEV-003 through XEV-005. Remove the scheduler guard when the pinned
+fork carries the nanoseconds itself.
 
 ## Upstream research (read-only; upstream is fetch-only for this project)
 

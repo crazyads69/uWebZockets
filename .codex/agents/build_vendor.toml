@@ -38,7 +38,7 @@ dependency migrations, and decisions.
 - Maintained dependency provenance: libxev, lsquic, and h1spec each have a
   read-only mirror and an append-only integration branch. Pin full 40-hex
   commits or submodule gitlinks and record `uwz(<area>): ...` ledger commits.
-  Current pins: libxev `cbf01bc`, lsquic `85bd081c`, h1spec `999ba9e8`; no
+  Current pins: libxev `c49f6dfb`, lsquic `85bd081c`, h1spec `999ba9e8`; no
   local patch or overlay remains.
 - `builds/orchestrator.zig`: target routing (native POSIX/Windows, wasm32,
   `all-targets`), `UWEBZOCKETS_DEFAULT_TARGET`, unsupported-target panic.

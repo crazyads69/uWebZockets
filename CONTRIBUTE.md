@@ -185,7 +185,7 @@ open issues or pull requests, comment, or send patches there.
 
 | Dependency | Integration branch | Current pin | Downstream ledger |
 | --- | --- | --- | --- |
-| libxev | `uwz/zig-0.16` | `cbf01bc432a84cd91a99c1cb1031b46416d044c7` | XEV-001, XEV-002 |
+| libxev | `uwz/zig-0.16` | `c49f6dfb83038c146232472c063e4b2681d098d8` | XEV-001 through XEV-005 |
 | lsquic | `uwz/main` | `85bd081c9103c077a7cc98271d09334d0f1043d4` | LSQ-001, LSQ-002 |
 | h1spec | `uwz/main` | `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` | H1S-001 |
 

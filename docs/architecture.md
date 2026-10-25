@@ -192,7 +192,7 @@ it `.until_done`. All completions are inline members of their owning connection,
 server, transport, or engine; none is heap-allocated, and none outlives the
 storage it borrows. Only `loop.zig` inspects the libxev backend; every other
 module cancels through the backend-aware shim. Dependency provenance follows
-[dependency_forks.md](dependency_forks.md): libxev pins `cbf01bc` on
+[dependency_forks.md](dependency_forks.md): libxev pins `c49f6dfb` on
 `uwz/zig-0.16`, lsquic pins `85bd081c` on `uwz/main`, and the h1spec submodule
 pins `999ba9e8`. The former [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md)
 overlay and the local lsquic/h1spec patches are removed.

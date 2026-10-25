@@ -235,12 +235,12 @@ on ignored developer certificates.
 
 `build.zig.zon` pins the maintained forks
 <https://github.com/farbenbuilds/libxev> at
-`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16` and
+`c49f6dfb83038c146232472c063e4b2681d098d8` on `uwz/zig-0.16` and
 <https://github.com/farbenbuilds/lsquic> at
 `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`. The h1spec
 submodule points at <https://github.com/farbenbuilds/h1spec> commit
 `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main`. The libxev ledger
-carries XEV-001 and XEV-002; lsquic carries LSQ-001 and LSQ-002; h1spec carries
+carries XEV-001 through XEV-005; lsquic carries LSQ-001 and LSQ-002; h1spec carries
 H1S-001 ([ADR 0005](docs/adr/0005-libxev-fork.md),
 [ADR 0006](docs/adr/0006-dependency-forks.md)). `patches/` and
 `vendor/lsquic_overlay` are deleted.

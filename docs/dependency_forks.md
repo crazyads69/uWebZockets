@@ -10,11 +10,11 @@ This page is the canonical rule for maintaining downstream forks of libxev,
 lsquic, and h1spec. It replaces local patch overlays and the assumption that a
 downstream fix must wait for an upstream release.
 
-## Current state (2026-10-24, 2.2.0 development)
+## Current state (2026-10-26, 2.1.6 patch line)
 
 | Dependency | Upstream | Maintained fork | Mirror branch | Integration branch | Pinned commit |
 | --- | --- | --- | --- | --- | --- |
-| libxev | `mitchellh/libxev` | `farbenbuilds/libxev` | `main` | `uwz/zig-0.16` | `cbf01bc432a84cd91a99c1cb1031b46416d044c7` |
+| libxev | `mitchellh/libxev` | `farbenbuilds/libxev` | `main` | `uwz/zig-0.16` | `c49f6dfb83038c146232472c063e4b2681d098d8` |
 | lsquic | `litespeedtech/lsquic` | `farbenbuilds/lsquic` | `master` | `uwz/main` | `85bd081c9103c077a7cc98271d09334d0f1043d4` |
 | h1spec | `uNetworking/h1spec` | `farbenbuilds/h1spec` | `main` | `uwz/main` | `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` |
 
@@ -29,20 +29,21 @@ downstream fix must wait for an upstream release.
 - ADR 0001 is accepted for implementation in 2.2.0. The live listener remains
   capability-gated until the WebTransport compliance work lands; `SECURITY.md`
   keeps the current "not live" statement until then.
-- XEV-003 and XEV-004 are proposed in `farbenbuilds/libxev` PR #1 and are not
-  pinned. The 2.1.6 scheduler no longer depends on `.rearm`, but the kqueue
-  duplicate-completion panic remains until those commits are merged into
-  `uwz/zig-0.16`, reviewed, and pinned in all four dependency views. A separate
-  XEV-005 candidate would normalize timer timespec nanoseconds in the fork;
-  2.1.6 guards the second boundary in the scheduler until that review happens.
-  See [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
+- XEV-003, XEV-004, and XEV-005 are merged into `uwz/zig-0.16` and pinned at
+  `c49f6dfb83038c146232472c063e4b2681d098d8`. They repair the kqueue rearm
+  state, duplicate completion queueing, nested-submit dispatch, pending-delete
+  flush, and active-count accounting. The 2.1.6 scheduler keeps its
+  second-boundary guard until a separate fork patch normalizes libxev timer
+  timespecs. See [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
 
 ## Mirror validation in CI
 
 `scripts/dependency_mirrors.env` records the reviewed commit of every mirror
 branch. Pull-request and `main` lint verify that the fork branch still equals
 that record. This keeps a code PR green when upstream advances; it does not
-hide a fork-only commit or a rewritten mirror.
+hide a fork-only commit or a rewritten mirror. The lsquic mirror was
+fast-forwarded to `413ca7c1acb443b0f9f7aa28611ca723c6738844` for 2.1.6; the
+integration pin remains `85bd081c9103c077a7cc98271d09334d0f1043d4`.
 
 Exact live equality is required at release and by the weekly
 `Dependency Mirrors` workflow:
@@ -191,6 +192,9 @@ the durable answer to why a fork diverges.
 | --- | --- | --- | --- | --- | --- | --- |
 | XEV-001 | libxev | Windows IOCP accept | [mitchellh/libxev#252](https://github.com/mitchellh/libxev/issues/252) | `AcceptEx` transfers ownership of the connected socket. Clear `internal_accept_socket` on success and error so the next re-arm allocates a fresh socket. | Native `windows-2025` runtime and AcceptEx re-arm regression. | Upstream or fork base contains an equivalent fix. |
 | XEV-002 | libxev | Winsock error mapping | None (downstream) | Unmapped Winsock errors return a stable error instead of panicking. | Native `windows-2025` runtime suite. | Upstream error mapping covers every returned Winsock code. |
+| XEV-003 | libxev | kqueue rearm state | [mitchellh/libxev#245](https://github.com/mitchellh/libxev/pull/245) | A completion reported by `submit()` and returning `.rearm` stays registered and active instead of becoming dead. | macOS `kqueue: cancel after a rearm of a completion reported at submit`; downstream 12/28 invalid-state starts before and 0/29 after. | Upstream or fork base contains the equivalent rearm state fix. |
+| XEV-004 | libxev | kqueue duplicate queueing | None (downstream; related issues #169 and #122) | A level-triggered readiness event for a completion already in the completion queue is skipped before `perform()`. | macOS `kqueue: a still-readable completion is queued once across submits`; downstream signal-watcher shutdown regression. | Upstream or fork base de-duplicates level-triggered events inside `submit()`. |
+| XEV-005 | libxev | kqueue dispatch accounting | None (downstream; related to #169, #122, and #224) | A completion is performed and called back at most once per dispatch, pending deletes flush before `no_wait` returns, and `EV_ERROR`/non-kqueue rearm keep the active count balanced. | Exact head `86d628a`: macOS arm64 65/65 tests in Debug and ReleaseSafe; downstream 647/647 Linux tests. | Upstream or fork base contains equivalent dispatch and accounting guards. |
 | LSQ-001 | lsquic | QPACK header errors | None (downstream QPACK policy) | Positive header-callback results and ambiguous content lengths reset only the request stream with `H3_MESSAGE_ERROR`; resource shortages use `H3_REQUEST_REJECTED`. | `scripts/http3_compliance/run.sh` `oversized_qpack` and sibling request case. | Upstream lsquic provides equivalent stream-scoped handling. |
 | LSQ-002 | lsquic | Generated version table | None (generated by `gen-verstrs.pl`) | The pinned tree contains `lsquic_versions_to_string.c`, so the build runs no Perl and carries no overlay. | `zig build lib` compiles the pinned tree. | Upstream ships the generated file or the build can generate it without Perl. |
 | H1S-001 | h1spec | Deno connection cleanup | None (downstream test runner) | Each test connection is unreferenced when opened and closed when its test completes, so the runner exits without leaking sockets. | h1spec compliance job exits cleanly. | Upstream h1spec closes and unrefs completed connections itself. |
@@ -249,7 +253,9 @@ Each mirror sync and integration merge is a supply-chain review:
   authoritative.
 - The native Windows runtime job remains the gate for XEV-001 and XEV-002. The
   HTTP/3 compliance job remains the gate for LSQ-001 and the WebTransport work
-  accepted by ADR 0001.
+  accepted by ADR 0001. The macOS arm64 and FreeBSD kqueue jobs run XEV-003
+  through XEV-005; the 2.1.6 release recorded 65/65 macOS tests in Debug and
+  ReleaseSafe on the exact XEV-005 tree.
 
 ## Migration record
 
@@ -259,6 +265,22 @@ Each mirror sync and integration merge is a supply-chain review:
 - `build.zig.zon` pins `cbf01bc432a84cd91a99c1cb1031b46416d044c7`.
 - The former overlay, audit patch, and overlay build step are deleted.
 - `scripts/check_libxev_fork.sh` is the provenance gate.
+
+### libxev kqueue hardening (completed in 2.1.6)
+
+- `farbenbuilds/libxev` PR #1 merged with a merge commit at
+  `c49f6dfb83038c146232472c063e4b2681d098d8`, based on
+  `cbf01bc432a84cd91a99c1cb1031b46416d044c7`.
+- XEV-003 and XEV-004 preserve a submit-reported rearm completion and deduplicate
+  level-triggered completion queueing.
+- XEV-005 guards nested submits in both dispatch loops, flushes pending
+  `EV_DELETE` changes from `no_wait`, and balances `EV_ERROR`/non-kqueue rearm
+  active counts.
+- The exact XEV-005 tree passed 65/65 macOS arm64 kqueue tests in Debug and
+  ReleaseSafe, 142/146 Linux tests (4 skipped), and the downstream suite at
+  647/647 on Linux.
+- `build.zig.zon` and all four dependency views pin
+  `c49f6dfb83038c146232472c063e4b2681d098d8`.
 
 ### lsquic and h1spec (implemented for 2.2.0)
 

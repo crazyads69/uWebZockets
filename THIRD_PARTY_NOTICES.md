@@ -5,7 +5,7 @@
 | Component | Version or revision | License |
 | --- | --- | --- |
 | zslay | 0.2.1 | MIT |
-| libxev | cbf01bc432a84cd91a99c1cb1031b46416d044c7 (farbenbuilds fork, base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf) | MIT |
+| libxev | c49f6dfb83038c146232472c063e4b2681d098d8 (farbenbuilds fork, base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf) | MIT |
 | BoringSSL | 0.20261020.0 (d3bf4795ad5b79d646cddf2fec687da5b9b502db) | ISC-style and component licenses |
 | Fiat Crypto (via BoringSSL) | BoringSSL revision above | Apache-2.0 |
 | lsquic | 85bd081c9103c077a7cc98271d09334d0f1043d4 (farbenbuilds fork, base 4.10.2 a9616720af78b9aab895145c1792d5305c480ae8) | MIT and bundled component licenses |
@@ -26,13 +26,13 @@ The maintained downstream forks are
 <https://github.com/farbenbuilds/libxev>,
 <https://github.com/farbenbuilds/lsquic>, and
 <https://github.com/farbenbuilds/h1spec>. `build.zig.zon` pins libxev at
-`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16` and lsquic at
+`c49f6dfb83038c146232472c063e4b2681d098d8` on `uwz/zig-0.16` and lsquic at
 `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`; the h1spec
 submodule points at `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main`.
 
-- libxev carries XEV-001 and XEV-002, which clear the IOCP accept socket after
-  `AcceptEx` transfers it to the completion and map the remaining Winsock
-  errors.
+- libxev carries XEV-001 through XEV-005: IOCP accept-socket ownership, Winsock
+  error mapping, kqueue rearm/duplicate-queue repair, and kqueue dispatch/active
+  count hardening.
 - lsquic carries LSQ-001, which keeps positive header-callback results and
   ambiguous content lengths stream-scoped, and LSQ-002, which commits the
   generated version table so the build runs no Perl.

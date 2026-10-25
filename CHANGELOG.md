@@ -5,17 +5,18 @@ uses Semantic Versioning.
 
 ## [2.1.6] - 2026-10-26
 
-Patch release that stops the timer scheduler from spinning on kqueue, keeps
-`TCP_NODELAY` best effort when the peer has already reset, and makes the HTTP
-and HTTP/2 benchmark harnesses fail on silent measurement gaps. Public APIs, C
-ABI layouts, capacities, wire formats, and TLS policy are unchanged.
+Patch release that stops the timer scheduler from spinning on kqueue, pins the
+libxev kqueue dispatch fixes, keeps `TCP_NODELAY` best effort when the peer has
+already reset, and makes the HTTP and HTTP/2 benchmark harnesses fail on silent
+measurement gaps. Public APIs, C ABI layouts, capacities, wire formats, and TLS
+policy are unchanged.
 
 ### Added
 
 - `docs/libxev_kqueue_findings.md` records the macOS kqueue investigation:
   the timer `.rearm` spin, the libxev invalid-state and duplicate-completion
-  defects, the throughput and memory measurements, and the pending XEV-003 and
-  XEV-004 fork fixes.
+  defects, the throughput and memory measurements, and the XEV-003 through
+  XEV-005 fork fixes.
 - The HTTP/2 harness records RSS sample count plus first, peak, and last RSS,
   rejects a missing or truncated sampler, and keeps platform-specific CPU
   observations in schema version 2.
@@ -24,6 +25,17 @@ ABI layouts, capacities, wire formats, and TLS policy are unchanged.
 
 ### Changed
 
+- `build.zig.zon` pins `farbenbuilds/libxev` at
+  `c49f6dfb83038c146232472c063e4b2681d098d8` on `uwz/zig-0.16`, adding
+  XEV-003 (kqueue rearm state), XEV-004 (duplicate completion queueing), and
+  XEV-005 (nested-submit dispatch, pending-delete flush, and active-count
+  accounting). All four dependency views carry the new commit, Zig hash, and
+  Nix hash. The exact XEV-005 tree passed 65/65 macOS arm64 kqueue tests in
+  Debug and ReleaseSafe.
+- The read-only lsquic mirror fast-forwards to upstream
+  `413ca7c1acb443b0f9f7aa28611ca723c6738844`, which preserves a zero
+  application CONNECTION_CLOSE error code. The lsquic integration pin remains
+  `85bd081c9103c077a7cc98271d09334d0f1043d4` for this patch release.
 - `timer.Scheduler` disarms each completed tick and arms a fresh relative
   five-millisecond timer. It no longer returns `.rearm`, which repeats the
   expired absolute timeout on every timer backend. A stopping scheduler does
@@ -63,6 +75,11 @@ ABI layouts, capacities, wire formats, and TLS policy are unchanged.
 - A kqueue server with a pending idle deadline no longer serves zero requests
   per second because the scheduler repeatedly fired an already-expired absolute
   timeout.
+- The libxev kqueue backend no longer leaves a submit-reported rearm completion
+  dead, queues a still-readable completion twice, requeues a completion during
+  its own callback or an outer dispatch batch, or drops staged `EV_DELETE`
+  changes from `no_wait`. `EV_ERROR` and non-kqueue rearm paths keep the active
+  count balanced.
 - `set_nodelay` no longer traps during accept when the peer has already reset
   the connection.
 - Missing `h2load` counters, invalid p99 values, a non-TLSv1.3 sample, a
@@ -71,21 +88,21 @@ ABI layouts, capacities, wire formats, and TLS policy are unchanged.
 
 ### Limits
 
-- libxev XEV-003 and XEV-004 remain proposed in `farbenbuilds/libxev` PR #1 and
-  are not pinned in this release. The timer workaround removes the scheduler
-  spin, but the kqueue duplicate-completion path can still panic the cluster
-  signal-watcher test until the fork fixes are merged and pinned.
 - The full committed HTTP/2 matrix, a Linux kqueue-equivalent A/B, Autobahn,
-  and ASan/UBSan were not rerun for the reported macOS measurements. The macOS
-  test graph cross-compiles, but no hosted macOS runner executes kqueue, so the
-  release does not claim a green macOS runtime suite. The Linux harness path
-  and the plaintext control were exercised on a local host.
+  and ASan/UBSan were not rerun for the reported macOS measurements. The exact
+  pinned libxev kqueue tree ran 65/65 on a hosted macOS arm64 runner in Debug
+  and ReleaseSafe; the downstream uWebZockets macOS suite was not run for this
+  release. The Linux harness path and plaintext control were exercised on a
+  local host.
 - The HTTP/2 harness requires nghttp2 `h2load` 1.69.0 or newer because older
   releases do not report p99 latency. Linux listener verification requires
   `ss` or `lsof`; macOS requires `lsof`.
 - The scheduler-side second-boundary guard remains until the maintained libxev
   fork normalizes timer timespecs. A fork patch for that carry is a separate
-  XEV-005 review, not part of the XEV-003 and XEV-004 proposal.
+  XEV-006 candidate, not part of XEV-003 through XEV-005.
+- Cancellation of a completion whose result is already queued remains ordered
+  after that callback because replacing an already-consumed accept or read
+  result can lose a socket or data. Close paths must wait for the callback.
 - `hello_world` keeps the `128`-connection default; the 256- and
   1,024-connection collapse recorded in the findings is a capacity limit, not
   a scheduler bottleneck.

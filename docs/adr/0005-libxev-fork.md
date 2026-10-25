@@ -95,8 +95,10 @@ implements.
 ## Consequences
 
 - The manifest pins `farbenbuilds/libxev` commit
-  `cbf01bc432a84cd91a99c1cb1031b46416d044c7`; no document or build step may
-  claim the upstream pin or the overlay is current.
+  `c49f6dfb83038c146232472c063e4b2681d098d8`; the 2.1.0 migration started at
+  `cbf01bc432a84cd91a99c1cb1031b46416d044c7`, and 2.1.6 added XEV-003 through
+  XEV-005. No document or build step may claim the upstream pin or the overlay
+  is current.
 - The fork integration history is the source of truth for downstream libxev
   behavior. The overlay and audit patch are deleted.
 - The native Windows runtime job and the XEV-001 re-arm regression remain the

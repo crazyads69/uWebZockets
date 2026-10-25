@@ -51,11 +51,11 @@ let
       rev = "92e6a0db9fa848d742f9eb286c92afc60f2c3dda";
       hash = "sha256-QVF2XL8Qu3mTszKKtx+8BExkTGkpMANXjkAe3XXPUJQ=";
     };
-    "libxev-0.0.0-86vtc3UWFAAm0IbNGZfqxwInlllaQ6S15g3OOHW2IvqS" = fetchZigGit {
+    "libxev-0.0.0-86vtcxpPFAA24HJL5_3vLiEzmdArsxVM5YtX91O6hGPt" = fetchZigGit {
       name = "libxev";
       url = "https://github.com/farbenbuilds/libxev";
-      rev = "cbf01bc432a84cd91a99c1cb1031b46416d044c7";
-      hash = "sha256-cDOjbpFTMa37UGOAdDGNT26PKqhPIju13IZnDYeSHD4=";
+      rev = "c49f6dfb83038c146232472c063e4b2681d098d8";
+      hash = "sha256-goSp0qOTXStZtXdP/h1lczEMIGif5RKV+5ViDG2/D5c=";
     };
     "N-V-__8AABdJVQA4Si44bpY_UYIuBqJm--4p63YluoS15TT-" = fetchZigGit {
       name = "lshpack";

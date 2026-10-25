@@ -144,9 +144,9 @@ Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
   same commit, review the mirror-to-integration range, and inspect build
   scripts, workflows, submodules, binaries, licenses, network/TLS, and memory
   changes with build/vendor and the owning domain specialist.
-- Current pins: libxev `cbf01bc432a84cd91a99c1cb1031b46416d044c7`
-  (XEV-001, XEV-002), lsquic `85bd081c9103c077a7cc98271d09334d0f1043d4`
-  (LSQ-001, LSQ-002), and h1spec
+- Current pins: libxev `c49f6dfb83038c146232472c063e4b2681d098d8`
+  (XEV-001 through XEV-005), lsquic
+  `85bd081c9103c077a7cc98271d09334d0f1043d4` (LSQ-001, LSQ-002), and h1spec
   `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` (H1S-001).
 - `patches/` and `vendor/lsquic_overlay` are deleted. Do not reintroduce a
   local patch, overlay, or CI `patch` step for a maintained dependency.

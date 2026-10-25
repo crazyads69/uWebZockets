@@ -419,8 +419,8 @@ by immutable URL or commit plus Zig package hash.
 
 Dependency provenance follows the [fork policy](docs/dependency_forks.md).
 `build.zig.zon` pins `farbenbuilds/libxev` at
-`cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16` with XEV-001 and
-XEV-002, and `farbenbuilds/lsquic` at
+`c49f6dfb83038c146232472c063e4b2681d098d8` on `uwz/zig-0.16` with XEV-001
+through XEV-005, and `farbenbuilds/lsquic` at
 `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main` with LSQ-001 and
 LSQ-002. The h1spec submodule points at
 `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main` with H1S-001.
