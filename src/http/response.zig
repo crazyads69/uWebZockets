@@ -16,6 +16,8 @@ pub const Http3BeginFn = *const fn (*anyopaque, []const u8, []const u8) anyerror
 pub const Http3WriteFn = *const fn (*anyopaque, []const u8) anyerror!void;
 /// HTTP/3 finish callback for a completed streaming response.
 pub const Http3FinishFn = *const fn (*anyopaque) anyerror!void;
+/// HTTP/3 best-effort abort callback for a failed response write.
+pub const Http3AbortFn = *const fn (*anyopaque) void;
 
 /// HTTP/2 end callback: stream id, status, response fields, and body bytes.
 pub const Http2EndFn = *const fn (*anyopaque, u32, []const u8, []const u8, []const u8) anyerror!void;
@@ -25,6 +27,8 @@ pub const Http2BeginFn = *const fn (*anyopaque, u32, []const u8, []const u8) any
 pub const Http2WriteFn = *const fn (*anyopaque, u32, []const u8) anyerror!void;
 /// HTTP/2 finish callback for a completed streaming response.
 pub const Http2FinishFn = *const fn (*anyopaque, u32) anyerror!void;
+/// HTTP/2 best-effort stream abort callback for a failed response write.
+pub const Http2AbortFn = *const fn (*anyopaque, u32) void;
 
 /// Deferred completion callback: status, response fields, and body bytes.
 pub const AsyncCompleteFn = *const fn (*anyopaque, []const u8, []const u8, []const u8) anyerror!void;
@@ -77,6 +81,8 @@ pub const Http3Target = struct {
     begin_fn: Http3BeginFn,
     write_fn: Http3WriteFn,
     finish_fn: Http3FinishFn,
+    /// Optional abort for a response write that cannot be retried.
+    abort_fn: ?Http3AbortFn = null,
     /// Optional drain-driven producer arming; null reports unsupported.
     begin_stream_fn: ?Http3StreamBeginFn = null,
 };
@@ -90,6 +96,8 @@ pub const Http2Target = struct {
     begin_fn: Http2BeginFn,
     write_fn: Http2WriteFn,
     finish_fn: Http2FinishFn,
+    /// Optional abort for a response write that cannot be retried.
+    abort_fn: ?Http2AbortFn = null,
     /// Optional drain-driven producer arming; null reports unsupported.
     begin_stream_fn: ?Http2StreamBeginFn = null,
     /// Optional per-worker gzip pool for `Response.end_gzip`.
@@ -298,6 +306,42 @@ pub const Response = struct {
     /// Sends a complete response with no additional fields.
     pub fn end(self: *Response, status: []const u8, body: []const u8) !void {
         return self.end_with_headers(status, "", body);
+    }
+
+    /// Ends a response from a callback whose ABI cannot report a failure.
+    ///
+    /// Intended for callbacks that select a complete response after their own
+    /// validation. On failure the transport is aborted: TCP closes, HTTP/2
+    /// resets the stream, and HTTP/3 closes the stream. Validation errors and
+    /// an already-started response follow the same abort path because the
+    /// callback has no return channel.
+    pub fn end_best_effort(self: *Response, status: []const u8, body: []const u8) void {
+        self.end(status, body) catch self.abort_transport();
+    }
+
+    /// Ends a response with raw headers on the best-effort callback path.
+    ///
+    /// Uses the same narrowed contract as `end_best_effort`.
+    pub fn end_with_headers_best_effort(
+        self: *Response,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) void {
+        self.end_with_headers(status, headers, body) catch self.abort_transport();
+    }
+
+    /// Aborts the transport after a response write that cannot be retried.
+    fn abort_transport(self: *Response) void {
+        switch (self.target) {
+            .tcp => |conn| tcp.close_connection(conn),
+            .http2 => |target| {
+                if (target.abort_fn) |abort| abort(target.context, target.stream_id);
+            },
+            .http3 => |target| {
+                if (target.abort_fn) |abort| abort(target.context);
+            },
+        }
     }
 
     /// Sends a complete response with validated raw response fields.

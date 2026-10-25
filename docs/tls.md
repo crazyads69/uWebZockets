@@ -182,8 +182,9 @@ single-application APIs, and a cluster listener is TCP/TLS only.
 
 | Error | Cause |
 | --- | --- |
-| `error.ClusterDeinitialized` | An enable call or `listen` was made after `deinit` |
-| `error.ClusterRunning` | `enable_https` was called while `run` was active |
+| `error.ClusterDeinitialized` | A lifecycle-sensitive call was made after `deinit` |
+| `error.ClusterRunning` | A configuration call was made while `run` was active |
+| `error.ClusterStopped` | A configuration, listen, or publish call was made after `run` returned |
 | `error.AlreadyListening` | `enable_https` was called after `listen` started |
 | `error.TlsAlreadyEnabled` | `enable_https` was called more than once |
 | `error.CertificateLoadFailed` | The PEM chain could not be read or parsed |

@@ -139,9 +139,26 @@ pub fn main(init: std.process.Init) !void {
     }.routes);
 
     try group.listen("0.0.0.0", 3000);
-    try group.run();
+    group.run() catch |err| {
+        if (group.first_failure()) |failure| {
+            std.log.err("worker {d} ({s}): {s}", .{
+                failure.index,
+                @tagName(failure.phase),
+                @errorName(failure.err),
+            });
+        }
+        return err;
+    };
 }
 ```
+
+`group.state()` reports `configured`, `running`, `stopped`, `releasing`, or
+`released`; `group.worker_count()` reports the active count and
+`group.worker_capacity()` the compiled capacity. `group.publish_report(...)`
+returns accepted, dropped, and wakeup-failed inbox counts instead of hiding a
+full worker queue in one number; `group.publish(...)` keeps its existing
+integer return. `group.deinit_checked()` is the supervisor-safe release path.
+See [ADR 0007](docs/adr/0007-cluster-lifecycle-and-failures.md).
 
 Workers share the port through `SO_REUSEPORT` (Linux/macOS) or `SO_REUSEADDR`
 (Windows fallback in code), are pinned to
@@ -306,7 +323,7 @@ normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v2.1.0  ready in
+summary before the first accepting listener: `µWebZockets v2.1.5  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
@@ -460,7 +477,9 @@ in [`examples/`](examples/), with walkthroughs in
 
 ## Platform support
 
-- Supported: Linux and macOS on `x86_64` and `aarch64`; built and tested by CI.
+- Supported: Linux and macOS on `x86_64` and `aarch64`; built and
+  cross-compiled by CI. Linux runs the runtime and sanitizer matrix; macOS is
+  compile-checked, with runtime coverage tracked in the roadmap.
 - Native Windows coverage: `x86_64-windows-gnu` now has compile gates plus a
   `windows-2025` runtime job. The 1.9.0 accept and queued-close fixes are
   recorded in

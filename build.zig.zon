@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "2.1.0",
+    .version = "2.1.5",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{

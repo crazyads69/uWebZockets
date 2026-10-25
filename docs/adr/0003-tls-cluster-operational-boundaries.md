@@ -79,7 +79,8 @@ explicit guard at the call site.
 - **Reload on every connection**: rejected because it puts file I/O and
   allocation on the accept path.
 - **Public lifecycle getters for the shutdown no-op**: rejected because the
-  behavior is already documented and a new public method needs an ADR.
+  behavior is already documented and a new public method needs an ADR. ADR 0007
+  supersedes this for the lifecycle state; the post-release no-op stands.
 
 ## Consequences
 

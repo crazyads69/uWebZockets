@@ -39,6 +39,7 @@ pub const static_files = @import("http/static_files.zig");
 pub const json_rpc = @import("rpc/json_rpc.zig");
 pub const json_rpc_http = @import("rpc/http.zig");
 pub const cluster = @import("router/cluster.zig");
+pub const worker_group = @import("router/worker_group.zig");
 pub const http2 = @import("http2/connection.zig");
 pub const http2_hpack = @import("http2/hpack.zig");
 pub const http2_server = @import("http2/server.zig");

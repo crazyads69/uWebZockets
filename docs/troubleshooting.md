@@ -98,25 +98,31 @@ See [client.md](client.md) for the full contract.
 - `Cluster.enable_https` is startup-only: call it once after `configure` and
   before `listen`. `error.TlsAlreadyEnabled` means a context is already
   installed, `error.AlreadyListening` means `listen` ran first,
-  `error.ClusterRunning` means `run` is active, and
-  `error.ClusterDeinitialized` means the cluster was already released. Remove
-  the duplicate call, fix the order, or rebuild the cluster.
+  `error.ClusterRunning` means `run` is active, `error.ClusterStopped` means
+  `run` already returned, and `error.ClusterDeinitialized` means the cluster
+  was already released. Remove the duplicate call, fix the order, or rebuild
+  the cluster.
 - `error.CertificateLoadFailed` and `error.PrivateKeyLoadFailed` at enable time
   map to the same PEM problems as the single-application TLS path: an
   unreadable or malformed chain/key, or a pair that does not belong together
   (BoringSSL rejects a mismatched key during load). A failed enable releases
   only the contexts it created, so correct the files and retry;
   `enable_https_ephemeral` avoids files for local work.
+- `Cluster.publish` after `run` returns `error.ClusterStopped`; a stopped
+  group has no consumer. Use `publish_report` to distinguish a full inbox
+  (`dropped`, `first_dropped_worker`) from a failed loop wakeup
+  (`notify_failed`), and `first_failure` to identify the worker, phase, and
+  original error after `run` returns.
 - HTTP/3/QUIC clustering is not supported. `init_http3` and `listen_udp` remain
   single-application APIs.
 - `Cluster.request_shutdown` requests shutdown for every worker;
   `App.request_shutdown` is the cross-thread-safe single-app entry, while
   `App.shutdown` must run on the owning loop thread. The cluster method
   returns `void` and cannot report a lifecycle error, so calling it after
-  `deinit` is a documented no-op on the released worker slice; the method
-  carries an explicit deinitialized guard. Check your own generation counter or
-  rebuild the cluster instead of awaiting an error; see
-  [ADR 0003](adr/0003-tls-cluster-operational-boundaries.md).
+  `deinit` is a documented no-op; use `state()` and `deinit_checked()` for a
+  typed lifecycle answer. See
+  [ADR 0003](adr/0003-tls-cluster-operational-boundaries.md) and
+  [ADR 0007](adr/0007-cluster-lifecycle-and-failures.md).
 - On Linux the loop uses io_uring when the kernel allows it and falls back to
   epoll when a container seccomp policy or old kernel rejects the ring, so
   Docker Desktop and OrbStack hosts no longer need `--privileged` just to

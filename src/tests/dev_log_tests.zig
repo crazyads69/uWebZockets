@@ -348,7 +348,7 @@ test "render_ready writes the Vite-style startup summary" {
         .port = 3000,
     });
     try testing.expectEqualStrings(
-        "  \x1b[1m\x1b[93mµWebZockets\x1b[0m \x1b[2mv2.1.0\x1b[0m  " ++
+        "  \x1b[1m\x1b[93mµWebZockets\x1b[0m \x1b[2mv2.1.5\x1b[0m  " ++
             "\x1b[2mready in\x1b[0m \x1b[32m4.2 ms\x1b[0m\n\n" ++
             "  \x1b[32m→\x1b[0m \x1b[1m\x1b[36mLocal:  \x1b[0m " ++
             "\x1b[36mhttp://127.0.0.1:3000/\x1b[0m\n\n",

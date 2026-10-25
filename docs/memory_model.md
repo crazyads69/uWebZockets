@@ -116,8 +116,9 @@ fields they need:
   metadata, body lengths, pending offsets, and flags, plus connection-wide
   HPACK dynamic-table and decoded-header storage.
 - **Cluster inbox** (`src/router/cluster.zig`): topic, payload, length, and flag
-  arrays with a sequence ring; only the sequence words are atomic, and the ring
-  positions sit on separate cache lines.
+  arrays with a sequence ring. The sequence words and enqueue/dequeue positions
+  are atomic, the ring positions sit on separate cache lines, and the consumer
+  drains into queue-owned scratch that no connection storage aliases.
 - **JSON-RPC registry** (`src/rpc/json_rpc.zig`): procedure metadata in
   parallel arrays with an open-addressed index and contiguous copied method
   bytes.
@@ -167,6 +168,10 @@ The defaults are deliberately finite:
 | C ABI | 1,024 connections, 64 copied route paths |
 | Write queue | fixed per connection |
 | Idle timeout | 120 seconds by default |
+
+Each active cluster worker also reserves `queue_capacity * max_ws_message_size`
+for its inbox plus one message-sized scratch buffer, about 1.0 MiB per worker
+at the 16 KiB default. This is separate from the worker's startup slab.
 
 Oversized or ambiguous input is rejected rather than expanded dynamically.
 

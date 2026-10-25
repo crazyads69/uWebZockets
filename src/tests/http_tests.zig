@@ -1251,3 +1251,85 @@ test "http2: captures beyond 16 resolve from the connection extras" {
     try std.testing.expectEqualStrings("a0", sink.first.?);
     try std.testing.expectEqualStrings("a19", sink.last.?);
 }
+
+test "http: best-effort response failure aborts the transport" {
+    const Sink = struct {
+        aborted: bool = false,
+
+        fn end(_: *anyopaque, _: []const u8, _: []const u8, _: []const u8) !void {
+            return error.ResponseTooLarge;
+        }
+
+        fn begin(_: *anyopaque, _: []const u8, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn write(_: *anyopaque, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn finish(_: *anyopaque) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn abort(context: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.aborted = true;
+        }
+    };
+
+    var sink = Sink{};
+    var res = response.Response{ .target = .{ .http3 = .{
+        .context = &sink,
+        .end_fn = Sink.end,
+        .begin_fn = Sink.begin,
+        .write_fn = Sink.write,
+        .finish_fn = Sink.finish,
+        .abort_fn = Sink.abort,
+    } } };
+
+    res.end_best_effort("200 OK", "body");
+    try std.testing.expect(sink.aborted);
+}
+
+test "http: best-effort HTTP/2 failure aborts the stream" {
+    const Sink = struct {
+        aborted: bool = false,
+
+        fn end(_: *anyopaque, _: u32, _: []const u8, _: []const u8, _: []const u8) !void {
+            return error.ResponseTooLarge;
+        }
+
+        fn begin(_: *anyopaque, _: u32, _: []const u8, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn write(_: *anyopaque, _: u32, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn finish(_: *anyopaque, _: u32) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn abort(context: *anyopaque, _: u32) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.aborted = true;
+        }
+    };
+
+    var sink = Sink{};
+    var res = response.Response{ .target = .{ .http2 = .{
+        .context = &sink,
+        .router = &sink,
+        .stream_id = 1,
+        .end_fn = Sink.end,
+        .begin_fn = Sink.begin,
+        .write_fn = Sink.write,
+        .finish_fn = Sink.finish,
+        .abort_fn = Sink.abort,
+    } } };
+
+    res.end_best_effort("200 OK", "body");
+    try std.testing.expect(sink.aborted);
+}

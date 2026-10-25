@@ -320,7 +320,8 @@ toolchain cohorts.
 ## Platform support
 
 - Supported: Linux and macOS on `x86_64` and `aarch64`; these targets are built
-  and tested by CI.
+  and cross-compiled by CI. Linux runs the runtime and sanitizer matrix; macOS
+  is compile-checked, with runtime coverage tracked in the roadmap.
 - Native Windows coverage: `x86_64-windows-gnu` has a reusable workflow that
   compiles the test and C ABI graph, builds the ReleaseFast libraries, and runs
   `zig build test` on `windows-2025`. The 1.9.0 accept and queued-close fixes

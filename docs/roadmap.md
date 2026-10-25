@@ -27,7 +27,7 @@ declared-limits handoff. The full measurement record is in
 | --- | --- |
 | L1a No 256/1,024-connection H2-over-TLS run | Closed with the full 64-2,048 sweep on the repository host. The 4-worker TLS cluster completed 30/30 samples with zero failures; 1,024 connections reached 276,534.80 req/s at one stream and 669,300.80 at eight. Artifacts and host caveats are linked above |
 | L4 MemorySanitizer scope | Closed as Option A: the dependency-boundary smoke is the permanent contract, dated 2026-10-19 ([CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md#memorysanitizer-contract-permanent-2026-10-19)) |
-| L5 `Cluster.request_shutdown` after `deinit` | Closed docs-only with an explicit internal guard, a call-site doc comment, and a regression test; no public getter was added ([ADR 0003](adr/0003-tls-cluster-operational-boundaries.md)) |
+| L5 `Cluster.request_shutdown` after `deinit` | Closed docs-only with an explicit internal guard, a call-site doc comment, and a regression test; no public getter was added for that no-op ([ADR 0003](adr/0003-tls-cluster-operational-boundaries.md)). The separate 2.1.5 lifecycle getter is recorded in [ADR 0007](adr/0007-cluster-lifecycle-and-failures.md) |
 | L6 TLS credential rotation | Closed as a dated decision: rolling restart remains the supported path; no hot reload ([ADR 0003](adr/0003-tls-cluster-operational-boundaries.md)) |
 | L7 Backend stickiness and internal `xev` | Closed as a dated decision: selection is process-sticky, `xev` stays internal, and backend introspection needs an ADR ([architecture.md](architecture.md#event-loop-and-completions)) |
 | L8 Shared-port TLS test flake | Closed after repeated focused and full-suite runs stayed green; the eight-reservation scheme remains |
@@ -53,7 +53,7 @@ claim.
 | Task | Resolution |
 | --- | --- |
 | P-1 Multi-core scaling | The shipped `build_cluster` / `enable_https` path is unchanged; every worker still owns one `SSL_CTX` and one loop. No second cluster abstraction or shared TLS state was added |
-| P-2 Uncapped worker scaling | `worker_count` is a compiled capacity. `ClusterOptions.worker_count` selects an explicit count, and `build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the platform CPU count. Active workers alone allocate slabs, inboxes, and thread handles; the previous fixed dispatch list and 32-worker concern are gone |
+| P-2 Uncapped worker scaling | `worker_count` is a compiled capacity. `ClusterOptions.worker_count` selects an explicit count, and `build_cluster_from_environment` prefers that option, then `UWEBZOCKETS_WORKERS`, then the platform CPU count. Active workers alone allocate slabs, inboxes, and thread handles; the previous fixed dispatch list and 32-worker concern are gone |
 | P-3 HTTP/1.1 pipelining | Every complete request in one read is dispatched in order. Multi-request reads append responses to the bounded ring and flush once; a lone request keeps the direct `sendmsg` path |
 | P-4 WebSocket batching | Unmasking uses the widest compiled vector (128-bit baseline, 256-bit AVX2) with scalar tails. Consecutive frames from one read share a single write flush |
 | P-5 Compressor pooling | Workers pre-open one RFC 7692 `libdeflate` context and, when enabled, one HTTP gzip codec with bounded scratch. `Response.end_gzip` never allocates on the request path |
@@ -70,6 +70,21 @@ claim.
 | UDP receive GRO | The libxev UDP read completion uses `msghdr.control = null`, so `UDP_GRO` segment boundaries are unavailable. Enabling it would make lsquic parse a coalesced buffer as one datagram. Restore when the loop exposes ancillary data or the transport moves to a raw `recvmsg` path |
 | Cross-process listener barrier | `listen_all` is in-process all-or-nothing. A cross-process socket takeover needs a shared-memory protocol and belongs to the v2.9.0 drain/takeover milestone |
 
+## Closed in 2.1.5
+
+The 2.1.5 release hardens the application API without changing the request
+path or the shared-nothing ownership model.
+
+| Boundary | Resolution |
+| --- | --- |
+| Cluster lifecycle was opaque | Atomic `ClusterState`, `state()`, `worker_count()`, and `worker_capacity()` make configured, running, stopped, releasing, and released groups explicit. Lifecycle misuse returns a named error instead of touching drained workers ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Worker failure lost its index and cause | `FailurePhase`, `WorkerFailure { index, phase, err }`, `first_failure()`, and `failure_count()` retain the first worker, spawn, or cleanup failure; `run` still returns `error.ClusterWorkerFailed` ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Full inboxes were hidden in one count | `PublishReport { queued, dropped, notify_failed, first_dropped_worker }` and `publish_report()` report per-worker acceptance and wakeup failure; `publish()` keeps its integer return ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Concurrent `deinit` could double-free | `begin_release` claims the free path once and waits for in-flight supervisor calls. Cleanup stops the watcher and drains loops before `stopped`; a surviving watcher is released by `deinit` after the loops are destroyed ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Cluster wakeup aliased connection 0's WebSocket buffer | Queue-owned scratch keeps cluster drain separate from fragmented-frame assembly; `pop_copy` checks actual message lengths before copying ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Thread lifecycle was inline in the application type | `src/router/worker_group.zig` owns lifecycle policy, release claiming, borrowed thread start/join, and first-failure capture; thread storage and compatibility fields stay in `Cluster` |
+| Cluster configuration used an untyped callback | `Cluster.configure` accepts the named `ConfigureCallback` function pointer |
+
 ## Carried into 2.2.0
 
 - Quiet-host evidence for the v2.0.0 and v2.1.0 pipeline, WebSocket,
@@ -84,11 +99,16 @@ claim.
   lsquic, and h1spec commits, plus the native Windows runtime gate
   ([ADR 0005](adr/0005-libxev-fork.md),
   [ADR 0006](adr/0006-dependency-forks.md), [policy](dependency_forks.md)).
-- lsquic and h1spec fork migration: pin the maintained commits, remove
-  `patches/` and `vendor/lsquic_overlay`, and run the HTTP/3 and h1spec gates.
+- lsquic and h1spec fork gate evidence: the maintained pins are recorded and
+  `patches/` plus `vendor/lsquic_overlay` are removed; the HTTP/3 and h1spec
+  compliance runs still need fresh artifacts.
 - HTTP/3 datagram and WebTransport implementation through the maintained
   lsquic fork, with the live path enabled only after the compliance gate
   ([ADR 0001](adr/0001-http3-datagram-and-webtransport.md)).
+- Extract the nested `Cluster` runtime from `src/router/app.zig` into a
+  dedicated module with a narrow App-private seam. The 2.1.5 release moved
+  lifecycle policy and failure state to `src/router/worker_group.zig`; the
+  remaining worker/inbox/TLS plumbing is the next ownership boundary.
 
 ## Deliberate boundaries
 

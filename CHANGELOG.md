@@ -3,21 +3,101 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [Unreleased]
+## [2.1.5] - 2026-10-25
+
+API-hardening release for the thread-per-core manager. It makes cluster
+lifecycle, worker failures, and publish outcomes typed and observable, moves
+thread lifecycle into one internal manager, and cleans up the v2.2.0 plan.
+There is no wire-protocol, TLS, capacity, or request-path change.
+
+### Added
+
+- Atomic `ClusterState` with `configured`, `running`, `stopped`, `releasing`,
+  and `released`; `Cluster.state()`, `worker_count()`, and
+  `worker_capacity()`.
+- `FailurePhase`, `WorkerFailure { index, phase, err }`, `first_failure()`, and
+  `failure_count()`. The first worker, spawn, or cleanup failure wins and is
+  logged with its worker index and phase.
+- `PublishReport { queued, dropped, notify_failed, first_dropped_worker }`,
+  `attempted()`, `all_delivered()`, and `Cluster.publish_report()`.
+  `Cluster.publish()` keeps its integer return and delegates to the report
+  path.
+- Named `Cluster.ConfigureCallback` replaces the `anytype` callback parameter.
+  A generic route function must be specialized to the concrete `Worker` type;
+  concrete function values keep their inferred error sets.
+- `Cluster.run`, `publish`, and `publish_report` expose the named finite
+  `RunError` and `PublishError` sets through `uz.cluster`.
+- `Cluster.deinit_checked()` for supervisors that need a typed release error;
+  `deinit()` keeps its panic contract.
+- `Response.end_best_effort` and `Response.end_with_headers_best_effort` for
+  callbacks whose ABI cannot propagate a response write failure.
+- ADR 0007 records the lifecycle, failure-reporting, release-claiming, and
+  publish-report decisions. `docs/api.md`, `docs/architecture.md`,
+  `CODEBASE.md`, `README.md`, and `docs/roadmap.md` describe the new surface.
 
 ### Changed
 
+- Lifecycle transitions, release claiming, borrowed thread-slice start/join,
+  and first-failure capture moved into `src/router/worker_group.zig`. Thread
+  storage and the public `threads`, `active_workers`, `thread_count`,
+  `worker_failed`, and `deinitialized` fields remain in `Cluster`.
+- Concurrent `deinit` calls claim release once; a second caller waits for the
+  winning owner to publish `released` instead of freeing storage twice.
+  Supervisor calls that touch worker storage register an in-flight call, and
+  release waits for them before freeing.
+- `cleanup_workers` stops the signal watcher and drains every worker loop
+  before `run` publishes `stopped`. If a drain fails, `deinit` releases the
+  surviving watcher after the loops are destroyed, so the free path remains
+  safe without claiming a completed drain.
+- `run` returns the original spawn error for a failed spawn and
+  `error.ClusterWorkerFailed` for a worker event-loop or cleanup failure.
+  Lifecycle misuse returns `ClusterRunning`, `ClusterStopped`, or
+  `ClusterDeinitialized`; `publish` after `run` returns `error.ClusterStopped`.
+- Worker-count and queue validation use the named `WorkerCountError`,
+  `MessageError`, and `QueueError` sets. Cluster message validation runs once
+  before any inbox is mutated. `build_cluster_from_environment` prefers an
+  explicit `ClusterOptions.worker_count` over the environment, then the
+  environment over the CPU count.
+- Successful publishes count failed loop wakeups in `notify_failed` instead of
+  reporting an unwoken message as delivered. Cluster publish and lifecycle
+  calls use a SeqCst in-flight gate so release cannot free worker storage under
+  a supervisor call; this cost is outside the HTTP request path and is not
+  benchmarked by the HTTP throughput gate.
+- Duplicate best-effort response helpers in static files and middleware were
+  replaced by the canonical `Response` methods. A failed best-effort write now
+  aborts the TCP connection or HTTP/2/3 stream instead of leaving the request
+  unanswered or appending a second response to a partial frame.
 - lsquic and h1spec now use maintained downstream forks, following the libxev
   policy. `build.zig.zon` pins `farbenbuilds/lsquic` commit
   `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`, and the
   `vendor/h1spec` submodule points at `farbenbuilds/h1spec` commit
-  `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main`.
-- `patches/` and `vendor/lsquic_overlay` are deleted. lsquic LSQ-001 and
-  LSQ-002 and h1spec H1S-001 live in the fork integration branches, and
-  `scripts/check_dependency_forks.sh` verifies all maintained dependency pins.
+  `999ba9e8f318b1c0ebbff1278b98bc5833f1af18` on `uwz/main`. `patches/` and
+  `vendor/lsquic_overlay` are deleted; the fork checks verify every pin.
 - ADR 0001 is accepted for HTTP/3 datagram and WebTransport implementation
   through the lsquic fork. The live path remains capability-gated until the
   2.2.0 compliance work lands.
+
+### Fixed
+
+- Worker failures retain the failing index, startup phase, and original error
+  instead of a bare boolean.
+- Full inboxes and failed loop wakeups are visible in the publish report
+  instead of being hidden in a single accepted count.
+- Concurrent `deinit` calls can no longer double-free worker storage, and
+  supervisor calls are drained before worker storage moves.
+- `message_queue.pop_copy` checks the actual message lengths before copying
+  and leaves the message queued when it does not fit, closing a release-build
+  out-of-bounds copy path without losing a message.
+
+### Security
+
+- Cluster wakeup now drains into queue-owned scratch instead of connection 0's
+  WebSocket assembly buffer. This closes a path where a publish between two
+  fragments could overwrite a live fragmented message or inject another
+  topic's payload into it.
+- No wire format or capacity limit changed. Cluster publish validation and
+  bounded inboxes remain fail-closed; best-effort response failures now abort
+  the TCP connection or HTTP/2/3 stream instead of leaving a partial response.
 
 ## [2.1.0] - 2026-10-24
 

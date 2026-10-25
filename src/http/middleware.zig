@@ -44,13 +44,13 @@ pub const Cors = struct {
             return .continue_dispatch;
         };
         const method = radix.HttpMethod.parse(requested_method) orelse {
-            end_best_effort(response, "403 Forbidden");
+            response.end_best_effort("403 Forbidden", "");
             return .stop;
         };
         if (!contains_method(self.options.methods, method) or
             !requested_headers_allowed(request, self.options.allow_headers))
         {
-            end_best_effort(response, "403 Forbidden");
+            response.end_best_effort("403 Forbidden", "");
             return .stop;
         }
 
@@ -73,7 +73,7 @@ pub const Cors = struct {
                 return .stop;
             };
         }
-        end_best_effort(response, "204 No Content");
+        response.end_best_effort("204 No Content", "");
         return .stop;
     }
 };
@@ -258,7 +258,7 @@ fn reject_auth(options: AuthOptions, response: *Response) void {
             return;
         };
     }
-    end_best_effort(response, "401 Unauthorized");
+    response.end_best_effort("401 Unauthorized", "");
 }
 
 /// Formats the challenge for the configured schemes without CR/LF or quotes
@@ -883,7 +883,7 @@ fn reject_limited(response: *Response, retry_after: u64) void {
             return;
         };
     }
-    end_best_effort(response, "429 Too Many Requests");
+    response.end_best_effort("429 Too Many Requests", "");
 }
 
 fn requested_headers_allowed(request: *const Request, allowed: []const []const u8) bool {
@@ -949,10 +949,5 @@ fn format_list(buffer: []u8, values: []const []const u8) ![]const u8 {
 }
 
 fn fail_response(response: *Response) void {
-    end_best_effort(response, "500 Internal Server Error");
-}
-
-fn end_best_effort(response: *Response, status: []const u8) void {
-    // The middleware ABI cannot report a response failure after dispatch stops.
-    response.end(status, "") catch {};
+    response.end_best_effort("500 Internal Server Error", "");
 }

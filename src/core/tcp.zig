@@ -686,6 +686,7 @@ pub const TcpConnection = struct {
             .begin_fn = begin_http2_response,
             .write_fn = write_http2_response,
             .finish_fn = finish_http2_response,
+            .abort_fn = abort_http2_response,
             .begin_stream_fn = begin_http2_stream,
             .compression_pool = self.http_compression,
         } } };
@@ -877,6 +878,12 @@ pub const TcpConnection = struct {
         };
     }
 
+    fn abort_http2_response(context: *anyopaque, stream_id: u32) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        self.h2.reset_stream(stream_id, .internal_error, self.http2_callbacks()) catch
+            close_connection(self);
+    }
+
     fn finish_http2_response(context: *anyopaque, stream_id: u32) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         const callbacks = self.http2_callbacks();
@@ -937,6 +944,7 @@ pub const TcpConnection = struct {
                 .begin_fn = begin_http2_response,
                 .write_fn = write_http2_response,
                 .finish_fn = finish_http2_response,
+                .abort_fn = abort_http2_response,
                 .compression_pool = self.http_compression,
             } },
             .state = .streaming,

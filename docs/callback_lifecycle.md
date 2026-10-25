@@ -238,9 +238,10 @@ on kqueue and IOCP instead of calling the backend directly.
   completed listener close, and a drained QUIC transport. `App.deinit`
   (`src/router/app.zig:328`) panics if called from inside the loop
   (`src/router/app.zig:331`) and frees through the original allocator.
-- Cluster: `Cluster.run` (`src/router/app.zig:1069`) runs one `App` per worker
-  thread and joins them; `request_cluster_shutdown`
-  (`src/router/app.zig:1154`) notifies every worker through the async wakeup.
+- Cluster: `Cluster.run` spawns and joins one `App` per worker thread through
+  `src/router/worker_group.zig`; a worker failure records its index and original
+  error before `Cluster.request_shutdown` notifies every worker through the
+  async wakeup. `first_failure()` keeps that detail after `run` returns.
 
 ## TCP connection life cycle
 

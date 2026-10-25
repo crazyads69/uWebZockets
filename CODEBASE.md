@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 2.1.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 2.1.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -20,9 +20,13 @@ listening begins. Route arrays are immutable after either listener starts, so
 callbacks never observe a structural mutation.
 
 Thread-per-core cluster workers each own one such slab, run one libxev loop,
-and coordinate only through lock-free sequence rings. Physical-core affinity,
-`SO_REUSEPORT`, `TCP_DEFER_ACCEPT`, and `TCP_QUICKACK` are applied during
-startup and accept; no mutex or spinlock remains on the steady-state I/O path.
+and coordinate only through lock-free sequence rings. `ClusterState`,
+`WorkerFailure`, `FailurePhase`, and `PublishReport` make lifecycle, failure,
+and delivery outcomes explicit; `src/router/worker_group.zig` owns lifecycle
+transitions, release claiming, borrowed thread start/join, and first-failure
+capture. Physical-core affinity, `SO_REUSEPORT`,
+`TCP_DEFER_ACCEPT`, and `TCP_QUICKACK` are applied during startup and accept;
+no mutex or spinlock remains on the steady-state I/O path.
 libxev is reached through `src/core/xev.zig`, which selects io_uring when the
 kernel permits it and otherwise degrades to epoll so containers without
 io_uring still start and serve.
@@ -94,7 +98,7 @@ uWebZockets/
 │   ├── ffi/                  # bounded generation-checked shared memory
 │   ├── http/                 # strict HTTP/1.1 parser, response writer, and request helpers
 │   ├── http2/                # bounded frames, slab-carved session storage, and HPACK
-│   ├── router/               # slab-carved radix router, App API, config, builder
+│   ├── router/               # slab-carved radix router, App API, config, builder, worker group
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub
 │   ├── observability/        # Prometheus registry, terminal dev log, and eBPF reader

@@ -51,10 +51,10 @@ pub fn static_files(comptime file_capacity: usize) type {
         pub fn handler(context: *anyopaque, request: *Request, response: *Response) void {
             const self: *Self = @ptrCast(@alignCast(context));
             self.serve(request, response) catch |err| switch (err) {
-                error.InvalidStaticPath, error.AccessDenied, error.SymLinkLoop => end_best_effort(response, "403 Forbidden"),
-                error.FileNotFound, error.NotDir => end_best_effort(response, "404 Not Found"),
-                error.FileTooLarge => end_best_effort(response, "413 Content Too Large"),
-                else => end_best_effort(response, "500 Internal Server Error"),
+                error.InvalidStaticPath, error.AccessDenied, error.SymLinkLoop => response.end_best_effort("403 Forbidden", ""),
+                error.FileNotFound, error.NotDir => response.end_best_effort("404 Not Found", ""),
+                error.FileTooLarge => response.end_best_effort("413 Content Too Large", ""),
+                else => response.end_best_effort("500 Internal Server Error", ""),
             };
         }
 
@@ -211,11 +211,6 @@ fn next_component(components: *std.mem.SplitIterator(u8, .scalar)) ?[]const u8 {
         if (component.len != 0) return component;
     }
     return null;
-}
-
-fn end_best_effort(response: *Response, status: []const u8) void {
-    // The synchronous route ABI has no caller after the handler returns.
-    response.end(status, "") catch {};
 }
 
 /// Parses one RFC 9110 byte range. Multiple ranges are intentionally rejected.

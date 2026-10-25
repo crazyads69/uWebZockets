@@ -393,8 +393,9 @@ pub fn configured_builder(comptime config: ServerConfig) type {
         ///
         /// `worker_capacity` sizes the compile-time worker, inbox, and thread
         /// arrays. `worker_count` must be nonzero and no larger than the
-        /// capacity; this is the entry point for `UWEBZOCKETS_WORKERS` and
-        /// CPU-count defaults without compiling a type per count.
+        /// capacity and wins over `options.worker_count`; this is the entry
+        /// point for `UWEBZOCKETS_WORKERS` and CPU-count defaults without
+        /// compiling a type per count.
         pub fn build_cluster_with_worker_count(
             self: Self,
             allocator: std.mem.Allocator,
@@ -411,10 +412,12 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             );
         }
 
-        /// Resolves `UWEBZOCKETS_WORKERS`, or the platform CPU count, at startup.
+        /// Resolves `options.worker_count`, then `UWEBZOCKETS_WORKERS`, then
+        /// the platform CPU count.
         ///
-        /// This is the environment-aware cluster entry point. Invalid, zero, or
-        /// above-capacity values fail before any worker slab is allocated.
+        /// This is the environment-aware cluster entry point. An explicit
+        /// option wins over the environment; invalid, zero, or above-capacity
+        /// values fail before any worker slab is allocated.
         pub fn build_cluster_from_environment(
             self: Self,
             allocator: std.mem.Allocator,
@@ -422,9 +425,10 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             environ: *const std.process.Environ.Map,
             options: app_module.ClusterOptions,
         ) !AppType.cluster(worker_capacity) {
-            const workers = try cluster_module.worker_count_from_environment(
+            const workers = try cluster_module.resolve_environment_worker_count(
                 environ,
                 worker_capacity,
+                options,
             );
             return self.build_cluster_with_worker_count(
                 allocator,

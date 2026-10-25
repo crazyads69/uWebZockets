@@ -163,6 +163,8 @@ pub fn pipe_to(
     if (buffer.len == 0) return error.EmptyTransferBuffer;
     errdefer {
         reader.cancel();
+        // Best effort: the caller receives the original transfer error; a
+        // close failure cannot change it.
         writer.close() catch {};
     }
 

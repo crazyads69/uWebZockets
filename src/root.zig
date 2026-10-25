@@ -9,7 +9,15 @@ pub const ConfiguredAppWithTimeout = @import("router/app.zig").configured_app_wi
 /// Fluent compile-time server builder that performs one startup allocation.
 pub const Server = @import("router/builder.zig").Server;
 /// Startup policy for thread-per-core worker groups.
-pub const ClusterOptions = @import("router/app.zig").ClusterOptions;
+pub const ClusterOptions = @import("router/cluster.zig").ClusterOptions;
+/// Lifecycle state of a thread-per-core worker group.
+pub const ClusterState = @import("router/cluster.zig").ClusterState;
+/// First worker, spawn, or cleanup error reported by a cluster.
+pub const WorkerFailure = @import("router/cluster.zig").WorkerFailure;
+/// Phase that produced a worker failure.
+pub const FailurePhase = @import("router/cluster.zig").FailurePhase;
+/// Per-worker acceptance and wakeup outcome of one cluster publish.
+pub const PublishReport = @import("router/cluster.zig").PublishReport;
 /// High-level server capacities and named presets.
 pub const ServerConfig = @import("router/config.zig").ServerConfig;
 /// Named capacity presets for common deployment shapes.

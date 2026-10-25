@@ -796,6 +796,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 .begin_fn = begin_response,
                 .write_fn = write_response,
                 .finish_fn = finish_response,
+                .abort_fn = abort_response,
                 .begin_stream_fn = begin_stream_response,
             };
         }
@@ -973,6 +974,12 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             _ = io.wantread(self.stream, 0);
             _ = io.shutdown(self.stream, 0);
             end_response(self, status, "", body) catch self.close_now();
+        }
+
+        fn abort_response(context: *anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            self.close_now();
+            self.response_phase = .done;
         }
 
         fn close_now(self: *Self) void {

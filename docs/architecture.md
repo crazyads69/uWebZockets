@@ -45,12 +45,15 @@ sessions, and credential state stay confined to the owning loop.
 
 The compiled `worker_count` is a capacity, not a hard runtime cap. A process may
 select fewer active workers with `ClusterOptions.worker_count`, or use
-`build_cluster_from_environment` to read `UWEBZOCKETS_WORKERS` and default to
-the platform CPU count. Only active workers allocate slabs, inboxes, and thread
+`build_cluster_from_environment` to prefer that option, then
+`UWEBZOCKETS_WORKERS`, then the platform CPU count. Only active workers
+allocate slabs, inboxes, and thread
 handles, so a large capacity does not reserve memory for unused workers.
-`worker(2)` is how you check that a two-worker cluster exposes exactly two
-workers. Pinning is physical-core based; a logical-CPU default may oversubscribe
-SMT hosts when affinity is enabled.
+`worker_count()` reports the allocated count, `worker_capacity()` reports the
+compiled capacity, `state()` reports the atomic lifecycle, and `worker(2)`
+returns null once the group has fewer active workers. Pinning is physical-core
+based; a logical-CPU default may oversubscribe SMT hosts when affinity is
+enabled.
 
 ```text
                SO_REUSEPORT
@@ -86,12 +89,27 @@ Cross-worker publish uses a bounded Vyukov sequence ring per worker inbox
 (`src/router/cluster.zig`). Any worker thread may publish; only the owning
 worker consumes on its event loop. The queue is allocation-free, reports
 `error.ClusterQueueFull` instead of blocking, and keeps the enqueue and dequeue
-positions on separate cache lines to avoid false sharing.
+positions on separate cache lines to avoid false sharing. `publish_report`
+exposes the accepted and dropped counts instead of hiding a full inbox in a
+single aggregate number. The owning loop drains each message through
+queue-owned scratch, so a cluster publish cannot overwrite a connection's
+fragmented WebSocket assembly buffer.
 
-After removing the former spinlock, no mutex or spinlock remains on the
-steady-state I/O path. The only lock left in the tree is lsquic's process-wide
+Lifecycle transitions, release claiming, borrowed thread-slice start/join, and
+first-failure capture live in `src/router/worker_group.zig`. Thread storage
+stays in `Cluster.threads`; the group never allocates and holds a spin lock
+only on the cold failure path. A worker failure records its index, phase, and
+original error before requesting shutdown. `run` returns
+`error.ClusterWorkerFailed` with the detail available through
+`first_failure()`, and `failure_count()` reports the total cascade size.
+`begin_release` claims the free path once, so a concurrent `deinit` cannot
+double-free worker storage.
+
+After removing the former publish spinlock, no mutex or spinlock remains on the
+steady-state I/O path. The only locks left are lsquic's process-wide
 initialization reference in `src/quic/lsquic_api.zig`, which is touched before
-the first listener starts and after the last one drains.
+the first listener starts and after the last one drains, and the worker group's
+cold failure-record lock used only by failure reporting.
 
 ### TCP tuning
 
